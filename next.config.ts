@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
   images: {
     domains: ['localhost'],
   },
+  output: 'standalone',
 };
 
 export default nextConfig;
