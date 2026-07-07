@@ -39,28 +39,34 @@ const removeUpload = (relPath) => {
   fs.existsSync(abs) && fs.unlink(abs, () => {});
 };
 
-// GET /api/directions — list with aggregated stats across their branches
+// GET /api/directions — list directions (belong to a branch) with group/student stats
 router.get('/', async (req, res) => {
   try {
-    const { search } = req.query;
+    const { search, branch_id } = req.query;
     const conditions = [];
     const params = [];
     let idx = 1;
+
+    // Branch admin only sees directions of their own branch
+    if (req.user.role === 'branch_admin') {
+      conditions.push(`d.branch_id = $${idx++}`); params.push(req.user.branch_id);
+    } else if (branch_id) {
+      conditions.push(`d.branch_id = $${idx++}`); params.push(branch_id);
+    }
     if (search) { conditions.push(`d.name ILIKE $${idx++}`); params.push(`%${search}%`); }
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const { rows } = await query(
-      `SELECT d.*,
-        COUNT(DISTINCT b.id) AS branch_count,
-        COUNT(DISTINCT CASE WHEN u.role = 'teacher' THEN u.id END) AS teacher_count,
-        COUNT(DISTINCT CASE WHEN u.role = 'student' THEN u.id END) AS student_count,
-        COUNT(DISTINCT g.id) AS group_count
+      `SELECT d.*, b.name AS branch_name,
+        COUNT(DISTINCT g.id) AS group_count,
+        COUNT(DISTINCT gs.student_id) AS student_count,
+        COUNT(DISTINCT g.teacher_id) AS teacher_count
        FROM directions d
-       LEFT JOIN branches b ON b.direction_id = d.id AND b.is_active = true
-       LEFT JOIN users u ON u.branch_id = b.id AND u.is_active = true
-       LEFT JOIN groups g ON g.branch_id = b.id AND g.is_active = true
+       LEFT JOIN branches b ON d.branch_id = b.id
+       LEFT JOIN groups g ON g.direction_id = d.id AND g.is_active = true
+       LEFT JOIN group_students gs ON gs.group_id = g.id
        ${where}
-       GROUP BY d.id
+       GROUP BY d.id, b.name
        ORDER BY d.created_at DESC`,
       params
     );
@@ -71,57 +77,62 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/directions/:id — direction + its branches with per-branch stats
+// GET /api/directions/:id — direction + its groups
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { rows } = await query(
-      `SELECT d.*,
-        COUNT(DISTINCT b.id) AS branch_count,
-        COUNT(DISTINCT CASE WHEN u.role = 'teacher' THEN u.id END) AS teacher_count,
-        COUNT(DISTINCT CASE WHEN u.role = 'student' THEN u.id END) AS student_count,
-        COUNT(DISTINCT g.id) AS group_count
+      `SELECT d.*, b.name AS branch_name,
+        COUNT(DISTINCT g.id) AS group_count,
+        COUNT(DISTINCT gs.student_id) AS student_count,
+        COUNT(DISTINCT g.teacher_id) AS teacher_count
        FROM directions d
-       LEFT JOIN branches b ON b.direction_id = d.id AND b.is_active = true
-       LEFT JOIN users u ON u.branch_id = b.id AND u.is_active = true
-       LEFT JOIN groups g ON g.branch_id = b.id AND g.is_active = true
-       WHERE d.id = $1 GROUP BY d.id`,
+       LEFT JOIN branches b ON d.branch_id = b.id
+       LEFT JOIN groups g ON g.direction_id = d.id AND g.is_active = true
+       LEFT JOIN group_students gs ON gs.group_id = g.id
+       WHERE d.id = $1 GROUP BY d.id, b.name`,
       [id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Direction not found' });
+    if (req.user.role === 'branch_admin' && rows[0].branch_id !== req.user.branch_id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
-    const { rows: branches } = await query(
-      `SELECT b.id, b.name, b.address, b.logo_url, b.colors, b.is_active,
-        COUNT(DISTINCT CASE WHEN u.role = 'teacher' THEN u.id END) AS teacher_count,
-        COUNT(DISTINCT CASE WHEN u.role = 'student' THEN u.id END) AS student_count,
-        COUNT(DISTINCT g.id) AS group_count
-       FROM branches b
-       LEFT JOIN users u ON u.branch_id = b.id AND u.is_active = true
-       LEFT JOIN groups g ON g.branch_id = b.id AND g.is_active = true
-       WHERE b.direction_id = $1
-       GROUP BY b.id ORDER BY b.created_at DESC`,
+    // Groups in this direction
+    const { rows: groups } = await query(
+      `SELECT g.id, g.name, g.max_students, g.is_active,
+        CONCAT(t.first_name, ' ', t.last_name) AS teacher_name,
+        COUNT(gs.student_id) AS student_count
+       FROM groups g
+       LEFT JOIN users t ON g.teacher_id = t.id
+       LEFT JOIN group_students gs ON gs.group_id = g.id
+       WHERE g.direction_id = $1
+       GROUP BY g.id, t.first_name, t.last_name
+       ORDER BY g.created_at DESC`,
       [id]
     );
 
-    res.json({ ...rows[0], branches });
+    res.json({ ...rows[0], groups });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// POST /api/directions
-router.post('/', requireRole('super_admin'), handleLogoUpload, async (req, res) => {
+// POST /api/directions — a direction belongs to a branch
+router.post('/', requireRole('super_admin', 'branch_admin'), handleLogoUpload, async (req, res) => {
   try {
     const { name, description, color } = req.body;
-    if (!name) {
+    // Branch admin can only create directions inside their own branch
+    const branch_id = req.user.role === 'branch_admin' ? req.user.branch_id : req.body.branch_id;
+    if (!name || !branch_id) {
       if (req.file) removeUpload(`/uploads/directions/${req.file.filename}`);
-      return res.status(400).json({ error: 'Direction name required' });
+      return res.status(400).json({ error: 'Direction name and branch_id required' });
     }
     const logoUrl = req.file ? `/uploads/directions/${req.file.filename}` : null;
     const { rows } = await query(
-      'INSERT INTO directions (name, description, color, logo_url) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, description || null, color || 'blue', logoUrl]
+      'INSERT INTO directions (name, description, color, logo_url, branch_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, description || null, color || 'blue', logoUrl, branch_id]
     );
     await log(req.user.id, 'DIRECTION_CREATED', 'direction', rows[0].id, { name }, req.ip);
     res.status(201).json(rows[0]);
@@ -132,15 +143,29 @@ router.post('/', requireRole('super_admin'), handleLogoUpload, async (req, res) 
 });
 
 // PUT /api/directions/:id
-router.put('/:id', requireRole('super_admin'), handleLogoUpload, async (req, res) => {
+router.put('/:id', requireRole('super_admin', 'branch_admin'), handleLogoUpload, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, color, is_active } = req.body;
+    const { name, description, color, is_active, branch_id } = req.body;
+
+    // Access check + branch scope for branch admins
+    const { rows: cur } = await query('SELECT branch_id FROM directions WHERE id = $1', [id]);
+    if (!cur.length) {
+      if (req.file) removeUpload(`/uploads/directions/${req.file.filename}`);
+      return res.status(404).json({ error: 'Direction not found' });
+    }
+    if (req.user.role === 'branch_admin' && cur[0].branch_id !== req.user.branch_id) {
+      if (req.file) removeUpload(`/uploads/directions/${req.file.filename}`);
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
     const updates = []; const params = []; let idx = 1;
     if (name !== undefined) { updates.push(`name = $${idx++}`); params.push(name); }
     if (description !== undefined) { updates.push(`description = $${idx++}`); params.push(description); }
     if (color !== undefined) { updates.push(`color = $${idx++}`); params.push(color); }
     if (is_active !== undefined) { updates.push(`is_active = $${idx++}`); params.push(is_active === 'true' || is_active === true); }
+    // Only super admin may move a direction to another branch
+    if (branch_id !== undefined && req.user.role === 'super_admin') { updates.push(`branch_id = $${idx++}`); params.push(branch_id); }
 
     let oldLogo = null;
     if (req.file) {
@@ -168,9 +193,14 @@ router.put('/:id', requireRole('super_admin'), handleLogoUpload, async (req, res
 });
 
 // DELETE /api/directions/:id
-router.delete('/:id', requireRole('super_admin'), async (req, res) => {
+router.delete('/:id', requireRole('super_admin', 'branch_admin'), async (req, res) => {
   try {
     const { id } = req.params;
+    if (req.user.role === 'branch_admin') {
+      const { rows: cur } = await query('SELECT branch_id FROM directions WHERE id = $1', [id]);
+      if (!cur.length) return res.status(404).json({ error: 'Direction not found' });
+      if (cur[0].branch_id !== req.user.branch_id) return res.status(403).json({ error: 'Access denied' });
+    }
     const { rows } = await query('DELETE FROM directions WHERE id = $1 RETURNING id, name, logo_url', [id]);
     if (!rows.length) return res.status(404).json({ error: 'Direction not found' });
     removeUpload(rows[0].logo_url);

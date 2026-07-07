@@ -29,7 +29,15 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({ storage, fileFilter, limits: { fileSize: 5 * 1024 * 1024 } });
 
-router.post('/avatar', upload.single('avatar'), async (req, res) => {
+// Wrap multer so its errors return clean JSON instead of crashing
+const handleAvatarUpload = (req, res, next) => {
+  upload.single('avatar')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    next();
+  });
+};
+
+router.post('/avatar', handleAvatarUpload, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const avatarUrl = `/uploads/avatars/${req.file.filename}`;

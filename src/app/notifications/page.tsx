@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { SearchableMultiSelect } from '@/components/ui/SearchableMultiSelect';
 import { formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 
@@ -17,6 +18,8 @@ interface Notification {
   id: string; title: string; message: string; type: string; is_read: boolean; created_at: string;
 }
 interface RecipientUser { id: string; first_name: string; last_name: string; username: string; }
+interface BranchLite { id: string; name: string; }
+type SendTarget = 'user' | 'students' | 'teachers' | 'branch';
 
 const typeVariant = (type: string) => {
   const m: Record<string, 'info' | 'success' | 'warning' | 'danger'> = { info: 'info', success: 'success', warning: 'warning', error: 'danger' };
@@ -36,10 +39,12 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [sendOpen, setSendOpen] = useState(false);
   const [users, setUsers] = useState<RecipientUser[]>([]);
-  const [sendForm, setSendForm] = useState({ user_id: '', title: '', message: '', type: 'info' });
+  const [branches, setBranches] = useState<BranchLite[]>([]);
+  const [sendForm, setSendForm] = useState({ target: 'user' as SendTarget, user_ids: [] as string[], branch_id: '', title: '', message: '', type: 'info' });
   const [sending, setSending] = useState(false);
 
   const canSend = user?.role === 'super_admin' || user?.role === 'branch_admin';
+  const isSuperAdmin = user?.role === 'super_admin';
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -75,20 +80,27 @@ export default function NotificationsPage() {
   };
 
   const openSend = async () => {
-    if (canSend) {
-      const data = await api.get<{ data: RecipientUser[] }>('/api/users', { limit: 200 });
+    if (!canSend) return;
+    setSendForm({ target: 'user', user_ids: [], branch_id: '', title: '', message: '', type: 'info' });
+    setSendOpen(true);
+    try {
+      const data = await api.get<{ data: RecipientUser[] }>('/api/users', { limit: 500 });
       setUsers(data.data.filter(u => u.id !== user?.id));
-      setSendForm({ user_id: '', title: '', message: '', type: 'info' });
-      setSendOpen(true);
-    }
+      if (isSuperAdmin) {
+        const b = await api.get<{ data: BranchLite[] }>('/api/branches');
+        setBranches(b.data);
+      }
+    } catch (err) { toast((err as Error).message, 'error'); }
   };
 
   const handleSend = async () => {
-    if (!sendForm.user_id || !sendForm.title || !sendForm.message) return toast(t('errors.required'), 'error');
+    if (!sendForm.title || !sendForm.message) return toast(t('errors.required'), 'error');
+    if (sendForm.target === 'user' && sendForm.user_ids.length === 0) return toast(t('errors.required'), 'error');
+    if (sendForm.target === 'branch' && isSuperAdmin && !sendForm.branch_id) return toast(t('errors.required'), 'error');
     setSending(true);
     try {
-      await api.post('/api/notifications', sendForm);
-      toast(t('common.success'), 'success');
+      const res = await api.post<{ count?: number }>('/api/notifications', sendForm);
+      toast(res?.count && res.count > 1 ? `${t('common.success')} (${res.count})` : t('common.success'), 'success');
       setSendOpen(false);
     } catch (err) { toast((err as Error).message, 'error'); }
     finally { setSending(false); }
@@ -143,10 +155,10 @@ export default function NotificationsPage() {
               {notifications.map(n => (
                 <div
                   key={n.id}
-                  className={cn('px-5 py-4 flex gap-3 transition-colors', !n.is_read && 'bg-indigo-50/50 dark:bg-indigo-900/10')}
+                  className={cn('px-5 py-4 flex gap-3 transition-colors', !n.is_read && 'bg-blue-50/50 dark:bg-blue-900/10')}
                   onClick={() => !n.is_read && markRead(n.id)}
                 >
-                  <div className={cn('w-2 h-2 rounded-full mt-2 shrink-0', n.is_read ? 'bg-gray-200 dark:bg-gray-700' : 'bg-indigo-500')} />
+                  <div className={cn('w-2 h-2 rounded-full mt-2 shrink-0', n.is_read ? 'bg-gray-200 dark:bg-gray-700' : 'bg-blue-500')} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <p className={cn('text-sm font-medium', n.is_read ? 'text-gray-700 dark:text-gray-300' : 'text-gray-900 dark:text-white')}>
@@ -173,13 +185,38 @@ export default function NotificationsPage() {
       <Modal open={sendOpen} onClose={() => setSendOpen(false)} title={t('notifications.sendNotification')}>
         <div className="space-y-4">
           <Select
-            label={t('notifications.recipient')}
-            value={sendForm.user_id}
-            onChange={e => setSendForm(f => ({ ...f, user_id: e.target.value }))}
-            placeholder="Select recipient"
-            options={users.map(u => ({ value: u.id, label: `${u.first_name} ${u.last_name} (@${u.username})` }))}
-            required
+            label={t('notifications.audience')}
+            value={sendForm.target}
+            onChange={e => setSendForm(f => ({ ...f, target: e.target.value as SendTarget, user_ids: [], branch_id: '' }))}
+            options={[
+              { value: 'user', label: t('notifications.individual') },
+              { value: 'students', label: t('notifications.allStudents') },
+              { value: 'teachers', label: t('notifications.allTeachers') },
+              { value: 'branch', label: t('notifications.byBranch') },
+            ]}
           />
+          {sendForm.target === 'user' && (
+            <SearchableMultiSelect
+              label={t('notifications.recipient')}
+              values={sendForm.user_ids}
+              onChange={ids => setSendForm(f => ({ ...f, user_ids: ids }))}
+              placeholder={t('notifications.selectRecipients')}
+              searchPlaceholder={t('notifications.searchUsers')}
+              emptyMessage={t('notifications.noResults')}
+              options={users.map(u => ({ value: u.id, label: `${u.first_name} ${u.last_name} (@${u.username})` }))}
+              required
+            />
+          )}
+          {sendForm.target === 'branch' && isSuperAdmin && (
+            <Select
+              label={t('common.branch')}
+              value={sendForm.branch_id}
+              onChange={e => setSendForm(f => ({ ...f, branch_id: e.target.value }))}
+              placeholder={t('notifications.selectBranch')}
+              options={branches.map(b => ({ value: b.id, label: b.name }))}
+              required
+            />
+          )}
           <Input
             label={t('notifications.notificationTitle')}
             value={sendForm.title}
@@ -192,7 +229,7 @@ export default function NotificationsPage() {
               value={sendForm.message}
               onChange={e => setSendForm(f => ({ ...f, message: e.target.value }))}
               rows={3}
-              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
           </div>
           <Select

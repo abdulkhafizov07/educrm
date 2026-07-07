@@ -6,7 +6,10 @@ import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Avatar } from '@/components/ui/Avatar';
-import { formatDate, mediaUrl } from '@/lib/utils';
+import { StatCard } from '@/components/ui/StatCard';
+import { AttendanceOverview } from '@/components/dashboard/AttendanceOverview';
+import { formatDate, mediaUrl, cn } from '@/lib/utils';
+import { colorOf } from '@/lib/colors';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -46,6 +49,15 @@ interface BranchDetail {
     avatar_url: string | null;
     group_count: string;
   }>;
+  directions: Array<{
+    id: string;
+    name: string;
+    color: string;
+    logo_url: string | null;
+    group_count: string;
+  }>;
+  attendanceToday?: { total: string; present_count: string; absent_count: string; late_count: string };
+  attendanceTrend?: Array<{ session_date: string; present_count: string; absent_count: string; late_count: string; total: string }>;
 }
 
 // Ikonkalar
@@ -97,7 +109,7 @@ export default function BranchDetailPage({ params }: { params: Promise<{ id: str
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center py-20">
-          <svg className="animate-spin h-6 w-6 text-indigo-600" fill="none" viewBox="0 0 24 24">
+          <svg className="animate-spin h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
@@ -111,12 +123,13 @@ export default function BranchDetailPage({ params }: { params: Promise<{ id: str
   const teachers = branch.teachers ?? [];
   const admins = branch.admins ?? [];
   const groups = branch.groups ?? [];
+  const directions = branch.directions ?? [];
 
   const statCards = [
-    { label: t('branches.students'), value: branch.student_count, icon: <StudentsIcon />, color: 'bg-indigo-100/70 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300', border: 'border-indigo-200 dark:border-indigo-800', bg: 'bg-indigo-50/50 dark:bg-indigo-950/30' },
-    { label: t('branches.teachers'), value: branch.teacher_count, icon: <TeachersIcon />, color: 'bg-green-100/70 text-green-600 dark:bg-green-900/40 dark:text-green-300', border: 'border-green-200 dark:border-green-800', bg: 'bg-green-50/50 dark:bg-green-950/30' },
-    { label: t('branches.groups'), value: branch.group_count, icon: <GroupsIcon />, color: 'bg-orange-100/70 text-orange-600 dark:bg-orange-900/40 dark:text-orange-300', border: 'border-orange-200 dark:border-orange-800', bg: 'bg-orange-50/50 dark:bg-orange-950/30' },
-    { label: t('users.roles.branch_admin'), value: branch.admin_count, icon: <AdminIcon />, color: 'bg-purple-100/70 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300', border: 'border-purple-200 dark:border-purple-800', bg: 'bg-purple-50/50 dark:bg-purple-950/30' },
+    { label: t('branches.students'), value: branch.student_count, icon: <StudentsIcon />, color: 'blue' as const },
+    { label: t('branches.teachers'), value: branch.teacher_count, icon: <TeachersIcon />, color: 'green' as const },
+    { label: t('branches.groups'), value: branch.group_count, icon: <GroupsIcon />, color: 'yellow' as const },
+    { label: t('users.roles.branch_admin'), value: branch.admin_count, icon: <AdminIcon />, color: 'purple' as const },
   ];
 
   return (
@@ -177,19 +190,47 @@ export default function BranchDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
 
-        {/* Stats with soft colored background (blur-like) */}
+        {/* Stats — same card style as the dashboard's top stat row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {statCards.map((s, i) => (
-            <div key={i} className={`${s.bg} rounded-lg border-l-4 ${s.border} border border-gray-200 dark:border-gray-800 p-5 shadow-sm backdrop-blur-sm`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{s.label}</p>
-                  <p className="text-2xl font-semibold text-gray-900 dark:text-white">{s.value}</p>
-                </div>
-                <div className={`w-10 h-10 rounded flex items-center justify-center ${s.color}`}>{s.icon}</div>
-              </div>
-            </div>
+            <StatCard key={i} title={s.label} value={s.value} icon={s.icon} color={s.color} />
           ))}
+        </div>
+
+        {/* Attendance — same charts as the dashboard, scoped to this branch's groups only */}
+        <AttendanceOverview attendanceToday={branch.attendanceToday} attendanceTrend={branch.attendanceTrend} />
+
+        {/* Directions in this branch */}
+        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+              {t('nav.directions')} ({directions.length})
+            </h2>
+          </div>
+          {directions.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-gray-400">{t('common.noData')}</div>
+          ) : (
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {directions.map(d => {
+                const c = colorOf(d.color);
+                return (
+                  <Link
+                    key={d.id}
+                    href={`/directions/${d.id}`}
+                    className={cn('flex items-center gap-3 p-3 rounded-lg border hover:shadow-sm transition-shadow', c.border)}
+                  >
+                    <div className={cn('w-9 h-9 rounded flex items-center justify-center shrink-0', c.bg, c.text)}>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{d.name}</p>
+                      <p className="text-xs text-gray-400">{d.group_count} {t('branches.groups')}</p>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

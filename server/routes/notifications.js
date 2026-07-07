@@ -49,17 +49,65 @@ router.put('/:id/read', async (req, res) => {
   }
 });
 
-// POST /api/notifications — super admin send notification to users
+// POST /api/notifications — send to selected users or to a whole audience
+// target: 'user' (user_ids array, or legacy single user_id) | 'students' | 'teachers' | 'branch' (everyone in a branch)
 router.post('/', requireRole('super_admin', 'branch_admin'), async (req, res) => {
   try {
-    const { user_id, title, message, type } = req.body;
-    if (!user_id || !title || !message) return res.status(400).json({ error: 'user_id, title, message required' });
+    const { target = 'user', user_id, user_ids, branch_id, title, message, type } = req.body;
+    if (!title || !message) return res.status(400).json({ error: 'title and message required' });
+
+    let recipientIds = [];
+
+    if (target === 'user') {
+      const ids = [...new Set(Array.isArray(user_ids) ? user_ids : (user_id ? [user_id] : []))];
+      if (!ids.length) return res.status(400).json({ error: 'user_ids required' });
+      // Branch admins may only message users inside their own branch
+      if (req.user.role === 'branch_admin') {
+        const { rows } = await query('SELECT id FROM users WHERE id = ANY($1::uuid[]) AND branch_id = $2', [ids, req.user.branch_id]);
+        if (rows.length !== ids.length) return res.status(403).json({ error: 'Access denied' });
+      }
+      recipientIds = ids;
+    } else {
+      const conds = ['is_active = true'];
+      const params = [];
+      let idx = 1;
+
+      // Branch scope: branch admins are locked to their branch; super admins may pick one
+      if (req.user.role === 'branch_admin') {
+        conds.push(`branch_id = $${idx++}`); params.push(req.user.branch_id);
+      } else if (branch_id) {
+        conds.push(`branch_id = $${idx++}`); params.push(branch_id);
+      }
+
+      if (target === 'students') {
+        conds.push(`role = $${idx++}`); params.push('student');
+      } else if (target === 'teachers') {
+        conds.push(`role = $${idx++}`); params.push('teacher');
+      } else if (target === 'branch') {
+        if (req.user.role !== 'branch_admin' && !branch_id) return res.status(400).json({ error: 'branch_id required' });
+        conds.push(`role <> 'super_admin'`); // everyone in the branch except super admins
+      } else {
+        return res.status(400).json({ error: 'Invalid target' });
+      }
+
+      const { rows } = await query(`SELECT id FROM users WHERE ${conds.join(' AND ')}`, params);
+      recipientIds = rows.map(r => r.id);
+    }
+
+    // Never notify the sender themselves
+    recipientIds = recipientIds.filter(id => id !== req.user.id);
+    if (!recipientIds.length) return res.status(400).json({ error: 'No recipients found' });
+
     const { rows } = await query(
-      'INSERT INTO notifications (user_id, title, message, type) VALUES ($1, $2, $3, $4) RETURNING *',
-      [user_id, title, message, type || 'info']
+      `INSERT INTO notifications (user_id, title, message, type)
+       SELECT uid, $2, $3, $4 FROM unnest($1::uuid[]) AS uid
+       RETURNING id`,
+      [recipientIds, title, message, type || 'info']
     );
-    res.status(201).json(rows[0]);
+
+    res.status(201).json({ success: true, count: rows.length });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

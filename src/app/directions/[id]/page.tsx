@@ -17,19 +17,15 @@ import {
   Users,
   GraduationCap,
   FolderKanban,
-  MapPin,
 } from 'lucide-react';
 
-interface BranchLite {
+interface GroupLite {
   id: string;
   name: string;
-  address: string | null;
-  logo_url: string | null;
-  colors: string[] | null;
+  max_students: number;
   is_active: boolean;
-  teacher_count: string;
+  teacher_name: string | null;
   student_count: string;
-  group_count: string;
 }
 
 interface DirectionDetail {
@@ -38,11 +34,12 @@ interface DirectionDetail {
   description: string | null;
   color: string;
   logo_url: string | null;
-  branch_count: string;
+  branch_id: string | null;
+  branch_name: string | null;
   teacher_count: string;
   student_count: string;
   group_count: string;
-  branches: BranchLite[];
+  groups: GroupLite[];
 }
 
 export default function DirectionDetailPage({
@@ -82,9 +79,9 @@ export default function DirectionDetailPage({
 
   const stats = [
     {
-      v: dir.branch_count,
-      l: t('directions.branches'),
-      icon: Building2,
+      v: dir.group_count,
+      l: t('branches.groups'),
+      icon: FolderKanban,
     },
     {
       v: dir.teacher_count,
@@ -95,11 +92,6 @@ export default function DirectionDetailPage({
       v: dir.student_count,
       l: t('branches.students'),
       icon: Users,
-    },
-    {
-      v: dir.group_count,
-      l: t('branches.groups'),
-      icon: FolderKanban,
     },
   ];
 
@@ -139,7 +131,7 @@ export default function DirectionDetailPage({
                 <img
                   src={mediaUrl(dir.logo_url) || ''}
                   alt={dir.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
               ) : (
                 <Building2 className={cn('w-7 h-7', c.text)} />
@@ -150,6 +142,12 @@ export default function DirectionDetailPage({
               <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
                 {dir.name}
               </h1>
+
+              {dir.branch_name && (
+                <Link href={`/branches/${dir.branch_id}`} className="text-sm text-gray-500 hover:underline mt-1 inline-flex items-center gap-1">
+                  <Building2 className="w-3.5 h-3.5" /> {dir.branch_name}
+                </Link>
+              )}
 
               {dir.description && (
                 <p className="text-sm text-gray-400 mt-1">
@@ -163,7 +161,7 @@ export default function DirectionDetailPage({
 
         {/* Stats */}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-3 gap-4">
 
           {stats.map((s, i) => {
             const Icon = s.icon;
@@ -218,15 +216,15 @@ export default function DirectionDetailPage({
 
         </div>
 
-        {/* Branches */}
+        {/* Groups */}
 
         <div>
 
           <h2 className="font-semibold text-lg mb-4 dark:text-white">
-            {t('directions.branchesIn')} ({dir.branches.length})
+            {t('branches.groups')} ({dir.groups.length})
           </h2>
 
-          {dir.branches.length === 0 ? (
+          {dir.groups.length === 0 ? (
             <div className="rounded-lg border p-8 bg-white dark:bg-gray-900 text-center text-sm text-gray-400">
               {t('common.noData')}
             </div>
@@ -234,127 +232,50 @@ export default function DirectionDetailPage({
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 
-              {dir.branches.map((b) => {
+              {dir.groups.map((g) => (
 
-                const colors =
-                  b.colors?.length
-                    ? b.colors
-                    : [dir.color];
+                <Link
+                  key={g.id}
+                  href={`/groups/${g.id}`}
+                  className={cn(
+                    'block rounded-lg border overflow-hidden bg-white dark:bg-gray-900 hover:shadow-md transition',
+                    c.border
+                  )}
+                >
 
-                const bc = colorOf(colors[0]);
+                  <div className={cn('h-1', c.solid)} />
 
-                return (
+                  <div className="p-4">
 
-                  <Link
-                    key={b.id}
-                    href={`/branches/${b.id}`}
-                    className={cn(
-                      'block rounded-lg border overflow-hidden bg-white dark:bg-gray-900 hover:shadow-md transition',
-                      bc.border
-                    )}
-                  >
+                    <div className="flex gap-3 items-center mb-3">
 
-                    <div className="flex h-1">
+                      <div className={cn('w-10 h-10 rounded-md flex items-center justify-center shrink-0', c.bg)}>
+                        <FolderKanban className={cn('w-5 h-5', c.text)} />
+                      </div>
 
-                      {colors.map((col, i) => (
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium truncate dark:text-white">{g.name}</h3>
+                        <p className="text-xs text-gray-400 truncate">{g.teacher_name || '—'}</p>
+                      </div>
 
-                        <div
-                          key={i}
-                          className={cn(
-                            'flex-1',
-                            colorOf(col).solid
-                          )}
-                        />
-
-                      ))}
+                      <Badge variant={g.is_active ? 'success' : 'default'}>
+                        {g.is_active ? t('common.active') : t('common.inactive')}
+                      </Badge>
 
                     </div>
 
-                    <div className="p-4">
-
-                      <div className="flex gap-3 items-center mb-3">
-
-                        <div
-                          className={cn(
-                            'w-20 h-15 rounded-md overflow-hidden flex items-center justify-center shrink-0',
-                            bc.bg
-                          )}
-                        >
-
-                          {b.logo_url ? (
-                            <img
-                              src={mediaUrl(b.logo_url) || ''}
-                              alt={b.name}
-                              className="w-full h-full object-contain"
-                            />
-                          ) : (
-                            <Building2
-                              className={cn(
-                                'w-5 h-5',
-                                bc.text
-                              )}
-                            />
-                          )}
-
-                        </div>
-
-                        <div className="flex-1 min-w-0">
-
-                          <h3 className="font-medium truncate dark:text-white">
-                            {b.name}
-                          </h3>
-
-                          {b.address && (
-                            <div className="flex items-center gap-1 text-xs text-gray-400 truncate">
-
-                              <MapPin className="w-3 h-3 shrink-0" />
-
-                              {b.address}
-
-                            </div>
-                          )}
-
-                        </div>
-
-                        <Badge
-                          variant={
-                            b.is_active
-                              ? 'success'
-                              : 'default'
-                          }
-                        >
-                          {b.is_active
-                            ? t('common.active')
-                            : t('common.inactive')}
-                        </Badge>
-
-                      </div>
-
-                      <div className="flex justify-between text-xs text-gray-500">
-
-                        <span className="flex items-center gap-1">
-                          <Users className="w-3 h-3" />
-                          {b.student_count}
-                        </span>
-
-                        <span className="flex items-center gap-1">
-                          <GraduationCap className="w-3 h-3" />
-                          {b.teacher_count}
-                        </span>
-
-                        <span className="flex items-center gap-1">
-                          <FolderKanban className="w-3 h-3" />
-                          {b.group_count}
-                        </span>
-
-                      </div>
-
+                    <div className="flex justify-between text-xs text-gray-500">
+                      <span className="flex items-center gap-1">
+                        <Users className="w-3 h-3" />
+                        {g.student_count}/{g.max_students}
+                      </span>
                     </div>
 
-                  </Link>
+                  </div>
 
-                );
-              })}
+                </Link>
+
+              ))}
 
             </div>
 

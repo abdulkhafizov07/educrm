@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
-import { formatDate, formatDateTime } from '@/lib/utils';
+import { formatDate, formatDateTime, mediaUrl } from '@/lib/utils';
 
 export default function ProfilePage() {
   const { t } = useI18n();
@@ -33,6 +33,21 @@ export default function ProfilePage() {
     confirmPassword: '',
   });
   const [changingPw, setChangingPw] = useState(false);
+
+  // App branding (super admin only)
+  const [appName, setAppName] = useState('');
+  const [appLogoUrl, setAppLogoUrl] = useState<string | null>(null);
+  const [appLogoFile, setAppLogoFile] = useState<File | null>(null);
+  const [appLogoPreview, setAppLogoPreview] = useState<string | null>(null);
+  const [savingApp, setSavingApp] = useState(false);
+  const appLogoRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (user?.role !== 'super_admin') return;
+    api.get<{ app_name: string | null; logo_url: string | null }>('/api/settings')
+      .then(s => { setAppName(s.app_name || ''); setAppLogoUrl(s.logo_url); })
+      .catch(() => {});
+  }, [user?.role]);
 
   if (!user) return null;
 
@@ -89,6 +104,32 @@ export default function ProfilePage() {
     }
   };
 
+  const onAppLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast(t('errors.fileTooLarge'), 'error'); return; }
+    if (appLogoPreview) URL.revokeObjectURL(appLogoPreview);
+    setAppLogoFile(file);
+    setAppLogoPreview(URL.createObjectURL(file));
+  };
+
+  const handleSaveApp = async () => {
+    setSavingApp(true);
+    try {
+      const fd = new FormData();
+      fd.append('app_name', appName);
+      if (appLogoFile) fd.append('logo', appLogoFile);
+      await api.putFormData('/api/settings', fd);
+      await refreshUser();
+      toast(t('common.success'), 'success');
+      setAppLogoFile(null);
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setSavingApp(false);
+    }
+  };
+
   const roleVariant = (
     role: string
   ): 'info' | 'danger' | 'success' | 'warning' | 'purple' => {
@@ -123,7 +164,7 @@ export default function ProfilePage() {
               <button
                 onClick={() => fileRef.current?.click()}
                 disabled={uploadingAvatar}
-                className="absolute -bottom-1 -right-1 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-indigo-700 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+                className="absolute -bottom-1 -right-1 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center hover:bg-blue-700 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
                 title={t('profile.changeAvatar')}
               >
                 {uploadingAvatar ? (
@@ -170,7 +211,7 @@ export default function ProfilePage() {
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp"
                 className="hidden"
                 onChange={handleAvatarChange}
               />
@@ -241,7 +282,7 @@ export default function ProfilePage() {
                   size="sm"
                   onClick={handleSaveProfile}
                   loading={saving}
-                  className="bg-indigo-600 hover:bg-indigo-700"
+                  className="bg-blue-600 hover:bg-blue-700"
                 >
                   {t('common.save')}
                 </Button>
@@ -305,6 +346,37 @@ export default function ProfilePage() {
           </div>
         </div>
 
+        {/* App branding — super admin uploads the logo shown instead of EduCRM */}
+        {user.role === 'super_admin' && (
+          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+              <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{t('profile.appBranding')}</h2>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => appLogoRef.current?.click()}
+                  className="w-20 h-20 rounded overflow-hidden flex items-center justify-center shrink-0 border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-500 bg-gray-50 dark:bg-gray-800 transition-colors"
+                >
+                  {appLogoPreview || appLogoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={appLogoPreview || mediaUrl(appLogoUrl) || ''} alt="" className="w-full h-full object-contain" />
+                  ) : (
+                    <svg className="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                </button>
+                <p className="text-xs text-gray-400">{t('branches.logoHint')}</p>
+                <input ref={appLogoRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={onAppLogoChange} className="hidden" />
+              </div>
+              <Input label={t('profile.appName')} value={appName} onChange={e => setAppName(e.target.value)} placeholder="EduCRM" />
+              <Button onClick={handleSaveApp} loading={savingApp} className="bg-blue-600 hover:bg-blue-700">{t('common.save')}</Button>
+            </div>
+          </div>
+        )}
+
         {/* Change password */}
         <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
           <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800">
@@ -346,7 +418,7 @@ export default function ProfilePage() {
                 !pwForm.newPassword ||
                 !pwForm.confirmPassword
               }
-              className="bg-indigo-600 hover:bg-indigo-700"
+              className="bg-blue-600 hover:bg-blue-700"
             >
               {t('auth.changePassword')}
             </Button>

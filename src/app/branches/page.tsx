@@ -24,6 +24,7 @@ interface Branch {
   email: string | null;
   is_active: boolean;
   created_at: string;
+  direction_count: string;
   teacher_count: string;
   student_count: string;
   group_count: string;
@@ -34,19 +35,17 @@ interface Branch {
   colors?: string[] | null;
 }
 
-interface DirectionOption { id: string; name: string; color: string; }
-
 interface BranchForm {
   name: string;
   address: string;
   phone: string;
   email: string;
   is_active: boolean;
-  direction_id: string;
   colors: AccentColor[];
+  created_at: string;
 }
 
-const empty: BranchForm = { name: '', address: '', phone: '', email: '', is_active: true, direction_id: '', colors: [] };
+const empty: BranchForm = { name: '', address: '', phone: '', email: '', is_active: true, colors: [], created_at: '' };
 
 export default function BranchesPage() {
   const { t, locale } = useI18n();
@@ -54,7 +53,6 @@ export default function BranchesPage() {
   const { toast } = useToast();
   const router = useRouter();
 
-  const [directions, setDirections] = useState<DirectionOption[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -111,12 +109,6 @@ export default function BranchesPage() {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  useEffect(() => {
-    api.get<{ data: DirectionOption[] }>('/api/directions')
-      .then(d => setDirections(d.data))
-      .catch(() => {});
-  }, []);
-
   const resetModal = () => {
     setEditing(null);
     setForm(empty);
@@ -137,8 +129,8 @@ export default function BranchesPage() {
       phone: b.phone || '',
       email: b.email || '',
       is_active: b.is_active,
-      direction_id: b.direction_id || '',
       colors: (b.colors || []).filter((c): c is AccentColor => ACCENT_COLORS.includes(c as AccentColor)),
+      created_at: b.created_at ? b.created_at.slice(0, 10) : '',
     });
     setLogoFile(null);
     setLogoPreview(null);
@@ -163,8 +155,8 @@ export default function BranchesPage() {
       formData.append('address', form.address || '');
       formData.append('phone', form.phone || '');
       formData.append('email', form.email || '');
-      formData.append('direction_id', form.direction_id || '');
       formData.append('colors', JSON.stringify(form.colors));
+      if (form.created_at) formData.append('created_at', form.created_at); // empty -> backend auto-fills NOW()
 
       if (editing) {
         formData.append('is_active', String(form.is_active));
@@ -232,7 +224,7 @@ export default function BranchesPage() {
             value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
             placeholder={t('common.search')}
-            className="w-full pl-10 pr-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full pl-10 pr-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
@@ -262,79 +254,78 @@ export default function BranchesPage() {
               return (
               <div
                 key={branch.id}
-                className={cn(
-                  'bg-white dark:bg-gray-900 rounded-lg border overflow-hidden transition-shadow hover:shadow-md',
-                  pc ? pc.border : 'border-gray-200 dark:border-gray-800'
-                )}
+                className="group bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
               >
                 {/* Multi-color strip */}
                 {colors.length > 0 && (
-                  <div className="flex h-1.5 w-full">
+                  <div className="flex h-1 w-full">
                     {colors.map((col, i) => <div key={i} className={cn('flex-1', colorOf(col).solid)} />)}
                   </div>
                 )}
 
-                {/* Logo – katta, yuqorida */}
-                <Link href={`/branches/${branch.id}`} className={cn('block w-full h-40 relative', pc ? pc.bg : 'bg-gray-100 dark:bg-gray-800')}>
-                  {branch.logo_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={mediaUrl(branch.logo_url) || ''}
-                      alt={branch.name}
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <div className={cn('w-full h-full flex items-center justify-center', pc ? pc.text : 'text-gray-400')}>
-                      <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                      </svg>
-                    </div>
-                  )}
-                </Link>
-
-                {/* Kartaning qolgan qismi */}
                 <div className="p-5">
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <Link href={`/branches/${branch.id}`} className="group/title flex-1 min-w-0">
-                      <h3 className="font-semibold text-gray-900 dark:text-white truncate group-hover/title:underline">
-                        {branch.name}
-                      </h3>
+                  {/* Header: kichik logo + nom + holat */}
+                  <div className="flex items-start gap-3 mb-4">
+                    <Link
+                      href={`/branches/${branch.id}`}
+                      className={cn(
+                        'w-14 h-14 rounded-xl shrink-0 flex items-center justify-center overflow-hidden border',
+                        pc ? cn(pc.bg, pc.border) : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                      )}
+                    >
+                      {branch.logo_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={mediaUrl(branch.logo_url) || ''}
+                          alt={branch.name}
+                          className="w-full h-full object-contain p-1"
+                        />
+                      ) : (
+                        <svg className={cn('w-7 h-7', pc ? pc.text : 'text-gray-400')} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                      )}
                     </Link>
-                    <Badge variant={branch.is_active ? 'success' : 'default'}>
-                      {branch.is_active ? t('common.active') : t('common.inactive')}
-                    </Badge>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <Link href={`/branches/${branch.id}`} className="min-w-0">
+                          <h3 className="font-semibold text-gray-900 dark:text-white truncate hover:underline">
+                            {branch.name}
+                          </h3>
+                        </Link>
+                        <Badge variant={branch.is_active ? 'success' : 'default'}>
+                          {branch.is_active ? t('common.active') : t('common.inactive')}
+                        </Badge>
+                      </div>
+                      {branch.address && (
+                        <p className="text-xs text-gray-400 truncate mt-0.5">{branch.address}</p>
+                      )}
+                      {(branch.phone || branch.email) && (
+                        <div className="flex flex-wrap gap-x-3 mt-1">
+                          {branch.phone && <span className="text-xs text-gray-400">{branch.phone}</span>}
+                          {branch.email && <span className="text-xs text-gray-400 truncate">{branch.email}</span>}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {branch.direction_name && (
-                    <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium mb-2', colorOf(branch.direction_color).bg, colorOf(branch.direction_color).text)}>
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                      {branch.direction_name}
-                    </span>
-                  )}
-
-                  {branch.address && (
-                    <p className="text-xs text-gray-400 truncate mb-3">{branch.address}</p>
-                  )}
-
-                  <Link href={`/branches/${branch.id}`} className="grid grid-cols-3 gap-2 mb-4 text-center">
+                  {/* Statistika: bitta qator, ajratkichlar bilan */}
+                  <Link
+                    href={`/branches/${branch.id}`}
+                    className="grid grid-cols-4 divide-x divide-gray-100 dark:divide-gray-800 rounded-lg bg-gray-50 dark:bg-gray-800/50 py-2.5 mb-4 text-center"
+                  >
                     {[
+                      { v: branch.direction_count, l: t('nav.directions') },
+                      { v: branch.group_count, l: t('branches.groups') },
                       { v: branch.student_count, l: t('branches.students') },
                       { v: branch.teacher_count, l: t('branches.teachers') },
-                      { v: branch.group_count, l: t('branches.groups') },
                     ].map((s, i) => (
-                      <div key={i} className={cn('rounded py-2', pc ? pc.bg : 'bg-gray-50 dark:bg-gray-800')}>
-                        <div className={cn('text-base font-semibold', pc ? pc.text : 'text-gray-900 dark:text-white')}>{s.v}</div>
-                        <div className="text-[11px] text-gray-500 dark:text-gray-400">{s.l}</div>
+                      <div key={i} className="px-1">
+                        <div className={cn('text-base font-bold leading-tight', pc ? pc.text : 'text-gray-900 dark:text-white')}>{s.v}</div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate">{s.l}</div>
                       </div>
                     ))}
                   </Link>
-
-                  {(branch.phone || branch.email) && (
-                    <div className="space-y-0.5 mb-4">
-                      {branch.phone && <p className="text-xs text-gray-400">{branch.phone}</p>}
-                      {branch.email && <p className="text-xs text-gray-400">{branch.email}</p>}
-                    </div>
-                  )}
 
                   <div className="flex items-center justify-between pt-3 border-t border-gray-100 dark:border-gray-800">
                     <span className="text-xs text-gray-400">{formatDate(branch.created_at)}</span>
@@ -398,19 +389,14 @@ export default function BranchesPage() {
             value={form.email}
             onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
           />
-
-          {/* Direction */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('branches.direction')}</label>
-            <select
-              value={form.direction_id}
-              onChange={e => setForm(f => ({ ...f, direction_id: e.target.value }))}
-              className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gray-500"
-            >
-              <option value="">{t('branches.noDirection')}</option>
-              {directions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          </div>
+          {/* Created date — left blank, the server auto-fills the current date */}
+          <Input
+            label={t('common.createdAt')}
+            type="date"
+            value={form.created_at}
+            hint={t('users.joinDateHint')}
+            onChange={e => setForm(f => ({ ...f, created_at: e.target.value }))}
+          />
 
           {/* Card colors (multiple) */}
           <div>
@@ -481,7 +467,7 @@ export default function BranchesPage() {
             <input
               ref={logoInputRef}
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              accept="image/png,image/jpeg,image/webp"
               onChange={onLogoChange}
               className="hidden"
             />

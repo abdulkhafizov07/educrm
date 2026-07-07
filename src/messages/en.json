@@ -56,7 +56,8 @@
     "never": "Never",
     "upload": "Upload",
     "remove": "Remove",
-    "sending": "Sending..."
+    "sending": "Sending...",
+    "selected": "selected"
   },
   "auth": {
     "login": "Login",
@@ -83,6 +84,8 @@
     "schedule": "Schedule",
     "notifications": "Notifications",
     "activityLog": "Activity Log",
+    "staff": "Staff",
+    "graduates": "Graduates",
     "students": "Students",
     "teachers": "Teachers",
     "profile": "My Profile"
@@ -100,7 +103,8 @@
     "present": "Present",
     "absent": "Absent",
     "late": "Late",
-    "attendanceRate": "Attendance Rate"
+    "attendanceRate": "Attendance Rate",
+    "last7Days": "Last 7 days"
   },
   "branches": {
     "title": "Branches",
@@ -152,6 +156,28 @@
     "userDeleted": "User deleted successfully",
     "deactivate": "Deactivate",
     "activate": "Activate",
+    "joinDateHint": "Leave empty to auto-set the current date",
+    "studentsTitle": "Students",
+    "staffTitle": "Staff",
+    "graduatesTitle": "Graduates",
+    "graduate": "Graduate",
+    "graduateNote": "Note",
+    "graduateGroup": "Group",
+    "graduateSaved": "Graduation details saved",
+    "graduated": "Graduated",
+    "graduatedAt": "Graduated on",
+    "revertGraduation": "Revert",
+    "revertGraduationConfirm": "Are you sure you want to revert this graduation? The student will return to the active Students list.",
+    "graduationReverted": "Graduation reverted",
+    "exportExcel": "Download Excel",
+    "dateFrom": "From date",
+    "dateTo": "To date",
+    "address": "Home address",
+    "motherPhone": "Parent's phone",
+    "fatherName": "Father's name",
+    "motherName": "Mother's name",
+    "birthYear": "Birth year",
+    "age": "Age",
     "roles": {
       "super_admin": "Super Admin",
       "branch_admin": "Branch Admin",
@@ -168,13 +194,16 @@
     "groupName": "Group Name",
     "teacher": "Teacher",
     "maxStudents": "Max Students",
+    "startDate": "Date Added",
+    "startDateHint": "Leave blank to use today's date automatically",
     "enrolledStudents": "Enrolled Students",
     "addStudent": "Add Student",
     "removeStudent": "Remove Student",
     "created": "Group created successfully",
     "updated": "Group updated successfully",
     "deleted": "Group deleted successfully",
-    "capacity": "Capacity"
+    "capacity": "Capacity",
+    "studentsAdded": "Students added to the group"
   },
   "attendance": {
     "title": "Attendance",
@@ -200,8 +229,13 @@
     "totalAbsent": "Total Absent",
     "totalLate": "Total Late",
     "avgLateMinutes": "Avg. Late Minutes",
+    "avgGrade": "Avg. Test Score",
     "noSessions": "No attendance sessions found",
     "register": "Attendance Register",
+    "exam": "Exam",
+    "markExam": "Mark/unmark as exam day",
+    "examHint": "Click T on a day to make it an exam — that day is graded (0–100)",
+    "grade": "Grade",
     "exportExcel": "Download Excel",
     "selectDate": "Select date",
     "noSchedule": "No schedule set for this group. Add a schedule to mark attendance.",
@@ -213,7 +247,12 @@
     "unmarked": "Unmarked",
     "markAllPresent": "Mark all present",
     "saved": "Saved",
-    "noDates": "No lesson days this month."
+    "noDates": "No lesson days this month.",
+    "overview": "Overview",
+    "monthlyView": "Monthly grid",
+    "overviewView": "Overview",
+    "totalSessions": "total sessions",
+    "lastSession": "Last session"
   },
   "schedule": {
     "title": "Schedule",
@@ -224,6 +263,8 @@
     "startTime": "Start Time",
     "endTime": "End Time",
     "classroom": "Classroom",
+    "lessonDays": "Lesson days",
+    "everyDay": "Every day",
     "days": {
       "0": "Sunday",
       "1": "Monday",
@@ -242,7 +283,16 @@
     "recipient": "Recipient",
     "notificationTitle": "Title",
     "message": "Message",
-    "type": "Type"
+    "type": "Type",
+    "audience": "Send to",
+    "individual": "Individual user",
+    "allStudents": "All students",
+    "allTeachers": "All teachers",
+    "byBranch": "By branch",
+    "selectBranch": "Select branch",
+    "selectRecipients": "Select recipients",
+    "searchUsers": "Search by name or username...",
+    "noResults": "No results found"
   },
   "profile": {
     "title": "My Profile",
@@ -251,7 +301,9 @@
     "security": "Security",
     "avatar": "Profile Photo",
     "changeAvatar": "Change Photo",
-    "memberSince": "Member Since"
+    "memberSince": "Member Since",
+    "appBranding": "App logo",
+    "appName": "App name"
   },
   "errors": {
     "generic": "Something went wrong. Please try again.",

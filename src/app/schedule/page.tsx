@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,7 +10,8 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { formatTime, getDayName } from '@/lib/utils';
+import { formatTime, getDayName, cn } from '@/lib/utils';
+import { ACCENT_COLORS, colorOf, type AccentColor } from '@/lib/colors';
 
 interface Schedule {
   id: string; group_id: string; group_name: string; branch_name: string; teacher_name: string;
@@ -94,6 +95,23 @@ export default function SchedulePage() {
     finally { setDeleting(false); }
   };
 
+  // Give each group its own accent color so a student in several groups can tell
+  // lessons apart at a glance (and a legend maps each color back to its group name).
+  const groupColors = useMemo(() => {
+    const map = new Map<string, AccentColor>();
+    let i = 0;
+    for (const s of schedules) {
+      if (!map.has(s.group_id)) { map.set(s.group_id, ACCENT_COLORS[i % ACCENT_COLORS.length]); i++; }
+    }
+    return map;
+  }, [schedules]);
+
+  const legend = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const s of schedules) if (!seen.has(s.group_id)) seen.set(s.group_id, s.group_name);
+    return [...seen.entries()].map(([id, name]) => ({ id, name, cc: colorOf(groupColors.get(id)) }));
+  }, [schedules, groupColors]);
+
   // Group by day
   const byDay = DAYS.map(day => ({
     day,
@@ -115,9 +133,21 @@ export default function SchedulePage() {
           )}
         </div>
 
+        {/* Group legend — colors below match each lesson card, so multi-group students don't mix them up */}
+        {legend.length > 1 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
+            {legend.map(g => (
+              <div key={g.id} className="flex items-center gap-1.5">
+                <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', g.cc.solid)} />
+                <span className="text-xs font-medium text-gray-600 dark:text-gray-300">{g.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center py-16">
-            <svg className="animate-spin h-6 w-6 text-indigo-600" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
             </svg>
@@ -137,12 +167,14 @@ export default function SchedulePage() {
                   <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{getDayName(day, t)}</h3>
                 </div>
                 <div className="p-3 space-y-2">
-                  {items.map(s => (
-                    <div key={s.id} className="bg-indigo-50 dark:bg-indigo-900/20 rounded p-3">
+                  {items.map(s => {
+                    const cc = colorOf(groupColors.get(s.group_id));
+                    return (
+                    <div key={s.id} className={cn('rounded p-3 border border-l-4', cc.bg, cc.border)}>
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-indigo-700 dark:text-indigo-300 truncate">{s.group_name}</p>
-                          <p className="text-xs text-indigo-500 dark:text-indigo-400">
+                          <p className={cn('text-sm font-medium truncate', cc.text)}>{s.group_name}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
                             {formatTime(s.start_time)} — {formatTime(s.end_time)}
                           </p>
                           {s.teacher_name && <p className="text-xs text-gray-400 truncate">{s.teacher_name}</p>}
@@ -150,7 +182,7 @@ export default function SchedulePage() {
                         </div>
                         {canEdit && (
                           <div className="flex gap-1 ml-2">
-                            <button onClick={() => openEdit(s)} className="text-gray-400 hover:text-indigo-600 p-0.5">
+                            <button onClick={() => openEdit(s)} className="text-gray-400 hover:text-blue-600 p-0.5">
                               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                               </svg>
@@ -164,7 +196,8 @@ export default function SchedulePage() {
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}

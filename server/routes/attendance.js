@@ -22,7 +22,7 @@ function lessonDatesInMonth(year, month /* 1-12 */, days) {
 
 // Verify the current user may manage attendance for a group
 async function assertGroupAccess(req, groupId) {
-  const { rows } = await query('SELECT id, branch_id, teacher_id FROM groups WHERE id = $1', [groupId]);
+  const { rows } = await query('SELECT id, branch_id, teacher_id, start_date FROM groups WHERE id = $1', [groupId]);
   if (!rows.length) return { ok: false, code: 404, error: 'Group not found' };
   const g = rows[0];
   if (req.user.role === 'teacher' && g.teacher_id !== req.user.id) return { ok: false, code: 403, error: 'Not assigned to this group' };
@@ -34,6 +34,8 @@ async function assertGroupAccess(req, groupId) {
 // GET /api/attendance/sessions
 router.get('/sessions', async (req, res) => {
   try {
+    // Students never see the group session list — only their own attendance (see /student/:id)
+    if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
     const { group_id, from_date, to_date, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const conditions = [];
@@ -108,6 +110,131 @@ router.get('/sessions/:id', async (req, res) => {
     res.json({ ...sessions[0], records });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Shared WHERE-clause builder for the grouped (one row per group) attendance overview + its export
+function buildGroupSummaryConditions(req, q) {
+  const conditions = [];
+  const params = [];
+  let idx = 1;
+
+  if (req.user.role === 'teacher') {
+    conditions.push(`g.teacher_id = $${idx++}`); params.push(req.user.id);
+  } else if (req.user.role === 'branch_admin') {
+    conditions.push(`g.branch_id = $${idx++}`); params.push(req.user.branch_id);
+  } else if (q.branch_id) {
+    conditions.push(`g.branch_id = $${idx++}`); params.push(q.branch_id);
+  }
+  if (q.search) { conditions.push(`g.name ILIKE $${idx++}`); params.push(`%${q.search}%`); }
+
+  return { where: conditions.length ? 'WHERE ' + conditions.join(' AND ') : '', params, nextIdx: idx };
+}
+
+// GET /api/attendance/groups-summary — one row per group (not per session) with aggregate attendance stats
+router.get('/groups-summary', async (req, res) => {
+  try {
+    if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
+    const { page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const { where, params, nextIdx } = buildGroupSummaryConditions(req, req.query);
+
+    const countRes = await query(`SELECT COUNT(*) FROM groups g ${where}`, params);
+    const total = parseInt(countRes.rows[0].count);
+
+    const { rows } = await query(
+      `SELECT g.id, g.name, b.name as branch_name, CONCAT(t.first_name, ' ', t.last_name) as teacher_name,
+         COUNT(DISTINCT s.id) as total_sessions,
+         MAX(s.session_date) as last_session_date,
+         SUM(CASE WHEN ar.status = 'present' THEN 1 ELSE 0 END) as present_count,
+         SUM(CASE WHEN ar.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+         SUM(CASE WHEN ar.status = 'late' THEN 1 ELSE 0 END) as late_count
+       FROM groups g
+       LEFT JOIN branches b ON g.branch_id = b.id
+       LEFT JOIN users t ON g.teacher_id = t.id
+       LEFT JOIN attendance_sessions s ON s.group_id = g.id AND s.is_exam = false
+       LEFT JOIN attendance_records ar ON ar.session_id = s.id
+       ${where}
+       GROUP BY g.id, b.name, t.first_name, t.last_name
+       ORDER BY g.name
+       LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`,
+      [...params, parseInt(limit), offset]
+    );
+
+    res.json({
+      data: rows.map(r => ({
+        ...r,
+        total_sessions: parseInt(r.total_sessions),
+        present_count: parseInt(r.present_count || 0),
+        absent_count: parseInt(r.absent_count || 0),
+        late_count: parseInt(r.late_count || 0),
+      })),
+      total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/attendance/groups-summary/export — Excel of the grouped attendance overview
+router.get('/groups-summary/export', async (req, res) => {
+  try {
+    if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
+    const { where, params } = buildGroupSummaryConditions(req, req.query);
+
+    const { rows } = await query(
+      `SELECT g.name, b.name as branch_name, CONCAT(t.first_name, ' ', t.last_name) as teacher_name,
+         COUNT(DISTINCT s.id) as total_sessions,
+         MAX(s.session_date) as last_session_date,
+         SUM(CASE WHEN ar.status = 'present' THEN 1 ELSE 0 END) as present_count,
+         SUM(CASE WHEN ar.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+         SUM(CASE WHEN ar.status = 'late' THEN 1 ELSE 0 END) as late_count
+       FROM groups g
+       LEFT JOIN branches b ON g.branch_id = b.id
+       LEFT JOIN users t ON g.teacher_id = t.id
+       LEFT JOIN attendance_sessions s ON s.group_id = g.id AND s.is_exam = false
+       LEFT JOIN attendance_records ar ON ar.session_id = s.id
+       ${where}
+       GROUP BY g.id, b.name, t.first_name, t.last_name
+       ORDER BY g.name`,
+      params
+    );
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Attendance Summary');
+    ws.mergeCells('A1', 'J1');
+    ws.getCell('A1').value = "Guruhlar bo'yicha davomat";
+    ws.getCell('A1').font = { bold: true, size: 14 };
+    ws.addRow([]);
+
+    const header = ws.addRow(['#', 'Guruh', 'Filial', "O'qituvchi", 'Jami dars', 'Keldi', 'Kelmadi', 'Kech qoldi', 'Oxirgi dars', 'Davomat %']);
+    header.font = { bold: true };
+    header.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF111827' } }; c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; });
+
+    rows.forEach((r, i) => {
+      const total = parseInt(r.total_sessions);
+      const present = parseInt(r.present_count || 0);
+      const absent = parseInt(r.absent_count || 0);
+      const late = parseInt(r.late_count || 0);
+      const pct = total ? Math.round(((present + late) / total) * 100) : 0;
+      ws.addRow([
+        i + 1, r.name, r.branch_name || '', r.teacher_name?.trim() || '',
+        total, present, absent, late,
+        r.last_session_date ? new Date(r.last_session_date).toISOString().slice(0, 10) : '',
+        total ? `${pct}%` : '',
+      ]);
+    });
+
+    ws.columns = [{ width: 5 }, { width: 24 }, { width: 18 }, { width: 20 }, { width: 12 }, { width: 10 }, { width: 12 }, { width: 12 }, { width: 14 }, { width: 12 }];
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="attendance-summary-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Export failed' });
   }
 });
 
@@ -190,7 +317,7 @@ router.get('/grid', async (req, res) => {
     const { rows: students } = await query(
       `SELECT u.id, u.first_name, u.last_name, u.username, u.avatar_url
        FROM group_students gs JOIN users u ON gs.student_id = u.id
-       WHERE gs.group_id = $1 AND u.is_active = true
+       WHERE gs.group_id = $1 AND (u.is_active = true OR u.graduated_at IS NOT NULL)
        ORDER BY u.first_name, u.last_name`,
       [group_id]
     );
@@ -206,11 +333,21 @@ router.get('/grid', async (req, res) => {
 
     const scheduledDates = days.length ? lessonDatesInMonth(y, m, days) : [];
 
-    // Existing records for the month
     const first = `${y}-${String(m).padStart(2, '0')}-01`;
     const last = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+
+    // All sessions in the month — so exam days appear even before any grade is entered
+    const { rows: sess } = await query(
+      `SELECT TO_CHAR(session_date, 'YYYY-MM-DD') AS session_date, is_exam
+       FROM attendance_sessions WHERE group_id = $1 AND session_date BETWEEN $2 AND $3`,
+      [group_id, first, last]
+    );
+    const examDates = sess.filter(s => s.is_exam).map(s => String(s.session_date).slice(0, 10));
+    const sessionDates = sess.map(s => String(s.session_date).slice(0, 10));
+
+    // Existing records for the month (status for normal days, grade for exam days)
     const { rows: recs } = await query(
-      `SELECT TO_CHAR(s.session_date, 'YYYY-MM-DD') AS session_date, ar.student_id, ar.status, ar.late_minutes
+      `SELECT TO_CHAR(s.session_date, 'YYYY-MM-DD') AS session_date, ar.student_id, ar.status, ar.late_minutes, ar.grade
        FROM attendance_sessions s
        JOIN attendance_records ar ON ar.session_id = s.id
        WHERE s.group_id = $1 AND s.session_date BETWEEN $2 AND $3`,
@@ -221,15 +358,64 @@ router.get('/grid', async (req, res) => {
     for (const r of recs) {
       const dateKey = String(r.session_date).slice(0, 10);
       records[dateKey] = records[dateKey] || {};
-      records[dateKey][r.student_id] = { status: r.status, late_minutes: r.late_minutes };
+      records[dateKey][r.student_id] = { status: r.status, late_minutes: r.late_minutes, grade: r.grade };
     }
 
-    // Columns = scheduled lesson days ∪ any day that already has records, so marked
-    // attendance is always shown in the register — even on non-scheduled dates or
-    // when the group has no schedule at all.
-    const dates = [...new Set([...scheduledDates, ...Object.keys(records)])].sort();
+    // Columns = scheduled lesson days ∪ any day that already has a session/records,
+    // so both marked attendance and exam days are always shown in the register.
+    const dates = [...new Set([...scheduledDates, ...sessionDates])].sort();
 
-    res.json({ year: y, month: m, students, dates, records, startByDay });
+    res.json({ year: y, month: m, students, dates, records, examDates, startByDay });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/attendance/overview?group_id=&from_date=&to_date= — cumulative stats since the group started
+// (or a custom range), per enrolled student. Exam sessions are excluded, and late is kept separate from absent.
+router.get('/overview', async (req, res) => {
+  try {
+    const { group_id, from_date, to_date } = req.query;
+    if (!group_id) return res.status(400).json({ error: 'group_id required' });
+
+    const access = await assertGroupAccess(req, group_id);
+    if (!access.ok) return res.status(access.code).json({ error: access.error });
+
+    const from = from_date || access.group.start_date;
+    const to = to_date || new Date().toISOString().slice(0, 10);
+
+    const { rows: totalRows } = await query(
+      `SELECT COUNT(*) FROM attendance_sessions
+       WHERE group_id = $1 AND is_exam = false AND session_date BETWEEN $2 AND $3`,
+      [group_id, from, to]
+    );
+
+    const { rows: students } = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.avatar_url,
+         COUNT(ar.id) as total,
+         SUM(CASE WHEN ar.status = 'present' THEN 1 ELSE 0 END) as present,
+         SUM(CASE WHEN ar.status = 'absent' THEN 1 ELSE 0 END) as absent,
+         SUM(CASE WHEN ar.status = 'late' THEN 1 ELSE 0 END) as late
+       FROM group_students gs
+       JOIN users u ON gs.student_id = u.id
+       LEFT JOIN attendance_sessions s ON s.group_id = gs.group_id AND s.is_exam = false AND s.session_date BETWEEN $2 AND $3
+       LEFT JOIN attendance_records ar ON ar.session_id = s.id AND ar.student_id = u.id
+       WHERE gs.group_id = $1 AND (u.is_active = true OR u.graduated_at IS NOT NULL)
+       GROUP BY u.id, u.first_name, u.last_name, u.username, u.avatar_url
+       ORDER BY u.first_name, u.last_name`,
+      [group_id, from, to]
+    );
+
+    res.json({
+      from_date: from,
+      to_date: to,
+      total_sessions: parseInt(totalRows[0].count),
+      students: students.map(s => ({
+        ...s,
+        total: parseInt(s.total), present: parseInt(s.present), absent: parseInt(s.absent), late: parseInt(s.late),
+      })),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -274,6 +460,73 @@ router.post('/mark', requireRole('super_admin', 'branch_admin', 'teacher'), asyn
   }
 });
 
+// POST /api/attendance/exam — mark/unmark a date as an exam (test) day
+router.post('/exam', requireRole('super_admin', 'branch_admin', 'teacher'), async (req, res) => {
+  try {
+    const { group_id, session_date, is_exam, start_time } = req.body;
+    if (!group_id || !session_date) return res.status(400).json({ error: 'group_id and session_date required' });
+
+    const access = await assertGroupAccess(req, group_id);
+    if (!access.ok) return res.status(access.code).json({ error: access.error });
+
+    await query(
+      `INSERT INTO attendance_sessions (group_id, teacher_id, session_date, start_time, is_exam)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (group_id, session_date)
+       DO UPDATE SET is_exam = EXCLUDED.is_exam,
+                     teacher_id = COALESCE(attendance_sessions.teacher_id, EXCLUDED.teacher_id)`,
+      [group_id, req.user.id, session_date, start_time || '00:00', !!is_exam]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/attendance/grade — set one student's exam grade (0-100) for one date
+router.post('/grade', requireRole('super_admin', 'branch_admin', 'teacher'), async (req, res) => {
+  try {
+    const { group_id, session_date, student_id, grade, start_time } = req.body;
+    if (!group_id || !session_date || !student_id) {
+      return res.status(400).json({ error: 'group_id, session_date and student_id required' });
+    }
+
+    const access = await assertGroupAccess(req, group_id);
+    if (!access.ok) return res.status(access.code).json({ error: access.error });
+
+    // Clamp the grade to 0-100, or null to clear it
+    const g = (grade === null || grade === undefined || grade === '')
+      ? null
+      : Math.max(0, Math.min(100, Math.round(Number(grade)) || 0));
+
+    // The date is an exam day; ensure the session exists and is flagged as exam
+    const { rows: sessions } = await query(
+      `INSERT INTO attendance_sessions (group_id, teacher_id, session_date, start_time, is_exam)
+       VALUES ($1, $2, $3, $4, true)
+       ON CONFLICT (group_id, session_date)
+       DO UPDATE SET is_exam = true,
+                     teacher_id = COALESCE(attendance_sessions.teacher_id, EXCLUDED.teacher_id)
+       RETURNING id`,
+      [group_id, req.user.id, session_date, start_time || '00:00']
+    );
+    const sessionId = sessions[0].id;
+
+    await query(
+      `INSERT INTO attendance_records (session_id, student_id, status, grade)
+       VALUES ($1, $2, 'present', $3)
+       ON CONFLICT (session_id, student_id)
+       DO UPDATE SET grade = EXCLUDED.grade`,
+      [sessionId, student_id, g]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/attendance/export?group_id=&date=YYYY-MM-DD — Excel of that date's attendance
 router.get('/export', async (req, res) => {
   try {
@@ -298,23 +551,23 @@ router.get('/export', async (req, res) => {
        JOIN users u ON gs.student_id = u.id
        LEFT JOIN attendance_sessions s ON s.group_id = gs.group_id AND s.session_date = $2
        LEFT JOIN attendance_records ar ON ar.session_id = s.id AND ar.student_id = u.id
-       WHERE gs.group_id = $1 AND u.is_active = true
+       WHERE gs.group_id = $1 AND (u.is_active = true OR u.graduated_at IS NOT NULL)
        ORDER BY u.first_name, u.last_name`,
       [group_id, date]
     );
 
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Attendance');
+    const ws = wb.addWorksheet('Davomat');
     ws.mergeCells('A1', 'G1');
     ws.getCell('A1').value = `${groupName} — ${date}`;
     ws.getCell('A1').font = { bold: true, size: 14 };
     ws.addRow([]);
 
-    const header = ws.addRow(['#', 'Student', 'Username', 'Phone', 'Status', 'Arrival', 'Late (min)']);
+    const header = ws.addRow(['#', 'Talaba', 'Login', 'Telefon', 'Holat', 'Kelish vaqti', 'Kechikish (daq)']);
     header.font = { bold: true };
     header.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF111827' } }; c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; });
 
-    const statusLabel = { present: 'Present', absent: 'Absent', late: 'Late' };
+    const statusLabel = { present: 'Keldi', absent: 'Kelmadi', late: 'Kech qoldi' };
     rows.forEach((r, i) => {
       ws.addRow([
         i + 1,
@@ -359,7 +612,7 @@ router.get('/student/:studentId', async (req, res) => {
 
     const where = 'WHERE ' + conditions.join(' AND ');
     const { rows } = await query(
-      `SELECT ar.*, s.session_date, s.start_time, g.name as group_name,
+      `SELECT ar.*, s.session_date, s.start_time, s.is_exam, g.name as group_name,
          CONCAT(t.first_name, ' ', t.last_name) as teacher_name
        FROM attendance_records ar
        JOIN attendance_sessions s ON ar.session_id = s.id
@@ -377,8 +630,10 @@ router.get('/student/:studentId', async (req, res) => {
     const late = rows.filter(r => r.status === 'late').length;
     const avgLate = late > 0 ? Math.round(rows.filter(r => r.status === 'late').reduce((s, r) => s + (r.late_minutes || 0), 0) / late) : 0;
     const attendancePct = total > 0 ? Math.round(((present + late) / total) * 100) : 0;
+    const grades = rows.filter(r => r.is_exam && r.grade !== null).map(r => r.grade);
+    const avgGrade = grades.length > 0 ? Math.round(grades.reduce((s, g) => s + g, 0) / grades.length) : null;
 
-    res.json({ records: rows, stats: { total, present, absent, late, avgLate, attendancePct } });
+    res.json({ records: rows, stats: { total, present, absent, late, avgLate, attendancePct, avgGrade } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

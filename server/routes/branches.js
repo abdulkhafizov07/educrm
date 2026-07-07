@@ -75,16 +75,26 @@ router.get('/', async (req, res) => {
     const total = parseInt(countRes.rows[0].count);
 
     const { rows } = await query(
-      `SELECT b.*, d.name as direction_name, d.color as direction_color,
-        COUNT(DISTINCT CASE WHEN u.role = 'teacher' THEN u.id END) as teacher_count,
-        COUNT(DISTINCT CASE WHEN u.role = 'student' THEN u.id END) as student_count,
-        COUNT(DISTINCT g.id) as group_count
+      `SELECT b.*,
+        COUNT(DISTINCT dir.id) as direction_count,
+        COUNT(DISTINCT g.id) as group_count,
+        -- A student/teacher belongs to a branch by direct assignment OR via the branch's active groups
+        (SELECT COUNT(DISTINCT u.id) FROM users u
+           WHERE u.role = 'teacher' AND u.is_active = true
+             AND (u.branch_id = b.id OR EXISTS (
+               SELECT 1 FROM groups g2 WHERE g2.teacher_id = u.id AND g2.branch_id = b.id AND g2.is_active = true))
+        ) as teacher_count,
+        (SELECT COUNT(DISTINCT u.id) FROM users u
+           WHERE u.role = 'student' AND u.is_active = true
+             AND (u.branch_id = b.id OR EXISTS (
+               SELECT 1 FROM group_students gs JOIN groups g2 ON gs.group_id = g2.id
+               WHERE gs.student_id = u.id AND g2.branch_id = b.id AND g2.is_active = true))
+        ) as student_count
        FROM branches b
-       LEFT JOIN directions d ON b.direction_id = d.id
-       LEFT JOIN users u ON u.branch_id = b.id AND u.is_active = true
+       LEFT JOIN directions dir ON dir.branch_id = b.id
        LEFT JOIN groups g ON g.branch_id = b.id AND g.is_active = true
        ${where}
-       GROUP BY b.id, d.name, d.color ORDER BY b.created_at DESC
+       GROUP BY b.id ORDER BY b.created_at DESC
        LIMIT $${idx} OFFSET $${idx + 1}`,
       [...params, parseInt(limit), offset]
     );
@@ -104,15 +114,23 @@ router.get('/:id', async (req, res) => {
 
     const { rows } = await query(
       `SELECT b.*, d.name as direction_name, d.color as direction_color,
-        COUNT(DISTINCT CASE WHEN u.role = 'teacher' THEN u.id END) as teacher_count,
-        COUNT(DISTINCT CASE WHEN u.role = 'student' THEN u.id END) as student_count,
-        COUNT(DISTINCT CASE WHEN u.role = 'branch_admin' THEN u.id END) as admin_count,
-        COUNT(DISTINCT g.id) as group_count
+        -- A student/teacher belongs to a branch by direct assignment OR via the branch's active groups
+        (SELECT COUNT(DISTINCT u.id) FROM users u
+           WHERE u.role = 'teacher' AND u.is_active = true
+             AND (u.branch_id = b.id OR EXISTS (
+               SELECT 1 FROM groups g2 WHERE g2.teacher_id = u.id AND g2.branch_id = b.id AND g2.is_active = true))
+        ) as teacher_count,
+        (SELECT COUNT(DISTINCT u.id) FROM users u
+           WHERE u.role = 'student' AND u.is_active = true
+             AND (u.branch_id = b.id OR EXISTS (
+               SELECT 1 FROM group_students gs JOIN groups g2 ON gs.group_id = g2.id
+               WHERE gs.student_id = u.id AND g2.branch_id = b.id AND g2.is_active = true))
+        ) as student_count,
+        (SELECT COUNT(*) FROM users u WHERE u.role = 'branch_admin' AND u.is_active = true AND u.branch_id = b.id) as admin_count,
+        (SELECT COUNT(*) FROM groups g2 WHERE g2.branch_id = b.id AND g2.is_active = true) as group_count
        FROM branches b
        LEFT JOIN directions d ON b.direction_id = d.id
-       LEFT JOIN users u ON u.branch_id = b.id AND u.is_active = true
-       LEFT JOIN groups g ON g.branch_id = b.id AND g.is_active = true
-       WHERE b.id = $1 GROUP BY b.id, d.name, d.color`,
+       WHERE b.id = $1`,
       [id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Branch not found' });
@@ -152,7 +170,47 @@ router.get('/:id', async (req, res) => {
       [id]
     );
 
-    res.json({ ...rows[0], groups, admins, teachers });
+    // Directions belonging to this branch (Branch -> Direction -> Group)
+    const { rows: directions } = await query(
+      `SELECT d.id, d.name, d.color, d.logo_url,
+        COUNT(DISTINCT g.id) AS group_count
+       FROM directions d
+       LEFT JOIN groups g ON g.direction_id = d.id AND g.is_active = true
+       WHERE d.branch_id = $1
+       GROUP BY d.id ORDER BY d.name`,
+      [id]
+    );
+
+    // Today's attendance, scoped to this branch's groups (same shape as /api/dashboard/stats)
+    const { rows: attendanceToday } = await query(
+      `SELECT
+         COUNT(ar.id) as total,
+         SUM(CASE WHEN ar.status = 'present' THEN 1 ELSE 0 END) as present_count,
+         SUM(CASE WHEN ar.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+         SUM(CASE WHEN ar.status = 'late' THEN 1 ELSE 0 END) as late_count
+       FROM attendance_records ar
+       JOIN attendance_sessions s ON ar.session_id = s.id
+       JOIN groups g ON s.group_id = g.id
+       WHERE s.session_date = CURRENT_DATE AND g.branch_id = $1`,
+      [id]
+    );
+
+    // Attendance trend (last 7 days), scoped to this branch's groups
+    const { rows: attendanceTrend } = await query(
+      `SELECT s.session_date,
+         SUM(CASE WHEN ar.status = 'present' THEN 1 ELSE 0 END) as present_count,
+         SUM(CASE WHEN ar.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+         SUM(CASE WHEN ar.status = 'late' THEN 1 ELSE 0 END) as late_count,
+         COUNT(ar.id) as total
+       FROM attendance_sessions s
+       JOIN attendance_records ar ON ar.session_id = s.id
+       JOIN groups g ON s.group_id = g.id
+       WHERE s.session_date >= CURRENT_DATE - INTERVAL '7 days' AND g.branch_id = $1
+       GROUP BY s.session_date ORDER BY s.session_date`,
+      [id]
+    );
+
+    res.json({ ...rows[0], groups, admins, teachers, directions, attendanceToday: attendanceToday[0], attendanceTrend });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -170,9 +228,15 @@ router.post('/', requireRole('super_admin'), handleLogoUpload, async (req, res) 
     const logoUrl = req.file ? `/uploads/branches/${req.file.filename}` : null;
     const colors = parseColors(req.body.colors);
 
+    // Optional manual created date; if omitted, the created_at column default (NOW()) applies
+    const cols = ['name', 'address', 'phone', 'email', 'logo_url', 'direction_id', 'colors'];
+    const vals = [name, address || null, phone || null, email || null, logoUrl, emptyToNull(direction_id), colors];
+    if (req.body.created_at) { cols.push('created_at'); vals.push(req.body.created_at); }
+    const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
+
     const { rows } = await query(
-      'INSERT INTO branches (name, address, phone, email, logo_url, direction_id, colors) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [name, address || null, phone || null, email || null, logoUrl, emptyToNull(direction_id), colors]
+      `INSERT INTO branches (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+      vals
     );
     await log(req.user.id, 'BRANCH_CREATED', 'branch', rows[0].id, { name }, req.ip);
     res.status(201).json(rows[0]);
@@ -196,6 +260,7 @@ router.put('/:id', requireRole('super_admin'), handleLogoUpload, async (req, res
     if (is_active !== undefined) { updates.push(`is_active = $${idx++}`); params.push(is_active === 'true' || is_active === true); }
     if (direction_id !== undefined) { updates.push(`direction_id = $${idx++}`); params.push(emptyToNull(direction_id)); }
     if (req.body.colors !== undefined) { updates.push(`colors = $${idx++}`); params.push(parseColors(req.body.colors)); }
+    if (req.body.created_at) { updates.push(`created_at = $${idx++}`); params.push(req.body.created_at); }
 
     // New logo uploaded -> set it and remove the old file
     let oldLogo = null;

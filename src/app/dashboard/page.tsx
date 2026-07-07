@@ -4,15 +4,22 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useI18n } from '@/contexts/I18nContext';
 import { api } from '@/lib/api';
-import { formatDateTime, cn, mediaUrl } from '@/lib/utils';
+import { formatDate, formatDateTime, cn, mediaUrl } from '@/lib/utils';
 import { colorOf, type AccentColor } from '@/lib/colors';
+import { StatCard } from '@/components/ui/StatCard';
+import { AttendanceOverview } from '@/components/dashboard/AttendanceOverview';
 import Link from 'next/link';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
 interface DashBranch {
   id: string; name: string; address: string | null; logo_url: string | null; colors: string[] | null;
   direction_name: string | null; direction_color: string | null;
   student_count: string; teacher_count: string; group_count: string;
+}
+
+interface DashGroup {
+  id: string; name: string; branch_name: string | null;
+  direction_name: string | null; direction_color: string | null;
+  teacher_name: string | null; student_count: string; max_students: number;
 }
 
 interface DashboardStats {
@@ -44,37 +51,23 @@ interface DashboardStats {
   }>;
 }
 
-function StatCard({ title, value, icon, color }: { title: string; value: number | string; icon: React.ReactNode; color: AccentColor }) {
-  const c = colorOf(color);
-  return (
-    <div className={cn('relative bg-white dark:bg-gray-900 rounded-lg border overflow-hidden p-5', c.border)}>
-      <div className={cn('absolute left-0 top-0 h-full w-1', c.solid)} />
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">{title}</p>
-          <p className={cn('text-2xl font-semibold', c.text)}>{value}</p>
-        </div>
-        <div className={cn('w-10 h-10 rounded flex items-center justify-center', c.bg, c.text)}>
-          {icon}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   const { user } = useAuth();
   const { t } = useI18n();
   const [data, setData] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [branches, setBranches] = useState<DashBranch[]>([]);
+  const [groups, setGroups] = useState<DashGroup[]>([]);
 
   useEffect(() => {
+    if (!user) return;
+    // Students only ever see their own attendance — not system/group totals
+    if (user.role === 'student') { setLoading(false); return; }
     api.get<DashboardStats>('/api/dashboard/stats')
       .then(setData)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (user?.role !== 'super_admin') return;
@@ -83,27 +76,19 @@ export default function DashboardPage() {
       .catch(() => {});
   }, [user]);
 
+  useEffect(() => {
+    if (user?.role !== 'super_admin' && user?.role !== 'branch_admin') return;
+    // The API scopes automatically: branch admins only get their own branch's groups
+    api.get<{ data: DashGroup[] }>('/api/groups', { is_active: true, limit: 8 })
+      .then(d => setGroups(d.data))
+      .catch(() => {});
+  }, [user]);
+
   const today = data?.attendanceToday;
   const presentN = parseInt(today?.present_count || '0');
-  const absentN = parseInt(today?.absent_count || '0');
   const lateN = parseInt(today?.late_count || '0');
   const totalN = parseInt(today?.total || '0');
   const attendancePct = totalN > 0 ? Math.round(((presentN + lateN) / totalN) * 100) : 0;
-
-  const pieData = [
-    { name: t('dashboard.present'), value: presentN },
-    { name: t('dashboard.absent'), value: absentN },
-    { name: t('dashboard.late'), value: lateN },
-  ].filter(d => d.value > 0);
-
-  const PIE_COLORS = ['#22c55e', '#ef4444', '#f59e0b'];
-
-  const trendData = (data?.attendanceTrend || []).map(d => ({
-    date: new Date(d.session_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    present: parseInt(d.present_count),
-    absent: parseInt(d.absent_count),
-    late: parseInt(d.late_count),
-  }));
 
   const actionLabel = (action: string) => {
     const map: Record<string, string> = {
@@ -136,10 +121,15 @@ export default function DashboardPage() {
     if (action.includes('DELETED') || action.includes('REMOVED')) return { color: 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400', icon: trash };
     if (action.includes('UPDATED')) return { color: 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400', icon: pencil };
     if (action.includes('LOGIN') || action.includes('LOGOUT')) return { color: 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400', icon: login };
-    if (action.includes('ATTENDANCE')) return { color: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400', icon: check };
+    if (action.includes('ATTENDANCE')) return { color: 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400', icon: check };
     if (action.includes('PASSWORD')) return { color: 'bg-purple-50 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400', icon: key };
     return { color: 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400', icon: check };
   };
+
+  // Students get a personal dashboard: only their own attendance, no system/group totals
+  if (user?.role === 'student') {
+    return <StudentDashboard userId={user.id} firstName={user.first_name} />;
+  }
 
   return (
     <DashboardLayout>
@@ -202,96 +192,155 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Today's attendance pie */}
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('dashboard.todayAttendance')}</h2>
-            {totalN === 0 ? (
-              <div className="flex items-center justify-center h-40 text-sm text-gray-400">No sessions today</div>
-            ) : (
-              <>
-                <ResponsiveContainer width="100%" height={160}>
-                  <PieChart>
-                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={3} dataKey="value">
-                      {pieData.map((_, index) => (
-                        <Cell key={index} fill={PIE_COLORS[index]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => [value, '']} />
-                    <Legend iconType="circle" iconSize={8} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="text-center mt-2">
-                  <span className="text-2xl font-semibold text-gray-900 dark:text-white">{attendancePct}%</span>
-                  <span className="text-sm text-gray-400 ml-1">{t('dashboard.attendanceRate')}</span>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Trend chart */}
-          <div className="lg:col-span-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('dashboard.attendanceTrend')}</h2>
-            {trendData.length === 0 ? (
-              <div className="flex items-center justify-center h-40 text-sm text-gray-400">No data available</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={trendData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" className="dark:stroke-gray-700" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="present" name={t('dashboard.present')} fill="#22c55e" radius={[2, 2, 0, 0]} />
-                  <Bar dataKey="absent" name={t('dashboard.absent')} fill="#ef4444" radius={[2, 2, 0, 0]} />
-                  <Bar dataKey="late" name={t('dashboard.late')} fill="#f59e0b" radius={[2, 2, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
+        <AttendanceOverview attendanceToday={data?.attendanceToday} attendanceTrend={data?.attendanceTrend} />
 
         {/* Branches (super admin) */}
         {user?.role === 'super_admin' && branches.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{t('nav.branches')}</h2>
-              <Link href="/branches" className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white">
-                {t('common.viewAll')} →
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+                <span className="flex items-center justify-center w-6 h-6 rounded-md bg-purple-50 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                </span>
+                {t('nav.branches')}
+              </h2>
+              <Link href="/branches" className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+                {t('common.viewAll')}
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
               </Link>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
               {branches.map(b => {
                 const colors = (b.colors && b.colors.length ? b.colors : []) as string[];
-                const pc = colors.length ? colorOf(colors[0]) : null;
+                const ac = (colors[0] as AccentColor) || null;
+                const c = ac ? colorOf(ac) : null;
+                const stats = [
+                  { v: b.student_count, l: t('branches.students'), d: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
+                  { v: b.teacher_count, l: t('branches.teachers'), d: 'M12 14l9-5-9-5-9 5 9 5z M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z' },
+                  { v: b.group_count, l: t('branches.groups'), d: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' },
+                ];
                 return (
                   <Link key={b.id} href={`/branches/${b.id}`}
-                    className={cn('block bg-white dark:bg-gray-900 rounded-lg border overflow-hidden transition-shadow hover:shadow-md',
-                      pc ? pc.border : 'border-gray-200 dark:border-gray-800')}>
-                    {colors.length > 0 && (
-                      <div className="flex h-1.5 w-full">
+                    className={cn(
+                      'group relative flex flex-col bg-white dark:bg-gray-900 rounded-xl border overflow-hidden shadow-sm',
+                      'transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5',
+                      c ? c.border : 'border-gray-200 dark:border-gray-800'
+                    )}
+                  >
+                    {/* Colour strip */}
+                    {colors.length > 0 ? (
+                      <div className="flex h-1.5 w-full shrink-0">
                         {colors.map((col, i) => <div key={i} className={cn('flex-1', colorOf(col).solid)} />)}
                       </div>
+                    ) : (
+                      <div className="h-1.5 w-full bg-gray-100 dark:bg-gray-800 shrink-0" />
                     )}
-                    <div className="p-4">
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className={cn('w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center shrink-0', pc ? cn(pc.bg, pc.text) : 'bg-gray-100 dark:bg-gray-800 text-gray-400')}>
-                          {b.logo_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={mediaUrl(b.logo_url) || ''} alt={b.name} className="w-full h-full object-contain" />
-                          ) : (
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-                          )}
+
+                    {/* Logo header */}
+                    <div className={cn('h-20 flex items-center justify-center relative overflow-hidden', c ? c.bg : 'bg-gray-50 dark:bg-gray-800/60')}>
+                      {b.logo_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={mediaUrl(b.logo_url) || ''} alt={b.name} className="h-12 w-auto max-w-[70%] object-contain transition-transform duration-200 group-hover:scale-105" />
+                      ) : (
+                        <div className={cn('w-12 h-12 rounded-lg flex items-center justify-center', c ? cn(c.bg, c.text) : 'bg-white dark:bg-gray-900 text-gray-400', 'ring-1 ring-black/5')}>
+                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
                         </div>
-                        <div className="min-w-0">
-                          <h3 className="font-semibold text-sm text-gray-900 dark:text-white truncate">{b.name}</h3>
-                          {b.direction_name && <p className={cn('text-xs truncate', colorOf(b.direction_color).text)}>{b.direction_name}</p>}
-                        </div>
+                      )}
+                    </div>
+
+                    {/* Body */}
+                    <div className="flex-1 flex flex-col p-4">
+                      <h3 className="font-semibold text-sm text-gray-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                        {b.name}
+                      </h3>
+                      {b.direction_name ? (
+                        <span className={cn('inline-flex items-center self-start mt-1 px-2 py-0.5 rounded-full text-[10px] font-medium', colorOf(b.direction_color).bg, colorOf(b.direction_color).text)}>
+                          {b.direction_name}
+                        </span>
+                      ) : (
+                        b.address ? <p className="text-xs text-gray-400 truncate mt-1">{b.address}</p> : <div className="mt-1 h-[18px]" />
+                      )}
+
+                      {/* Stats */}
+                      <div className="grid grid-cols-3 gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                        {stats.map((s, i) => (
+                          <div key={i} title={s.l} className={cn('flex flex-col items-center gap-0.5 rounded-lg py-1.5', c ? c.bg : 'bg-gray-50 dark:bg-gray-800/60')}>
+                            <svg className={cn('w-3.5 h-3.5', c ? c.text : 'text-gray-400')} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={s.d} />
+                            </svg>
+                            <span className="text-sm font-bold text-gray-900 dark:text-white leading-none">{s.v}</span>
+                          </div>
+                        ))}
                       </div>
-                      <div className="flex gap-3 text-xs text-gray-500 dark:text-gray-400">
-                        <span><span className="font-medium text-gray-900 dark:text-white">{b.student_count}</span> {t('branches.students').toLowerCase()}</span>
-                        <span><span className="font-medium text-gray-900 dark:text-white">{b.teacher_count}</span> {t('branches.teachers').toLowerCase()}</span>
-                        <span><span className="font-medium text-gray-900 dark:text-white">{b.group_count}</span> {t('branches.groups').toLowerCase()}</span>
-                      </div>
+                    </div>
+
+                    {/* Hover arrow */}
+                    <svg className="absolute top-3 right-3 w-4 h-4 text-white/0 group-hover:text-gray-400 dark:group-hover:text-gray-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Groups */}
+        {(user?.role === 'super_admin' || user?.role === 'branch_admin') && groups.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+                <span className="flex items-center justify-center w-6 h-6 rounded-md bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                </span>
+                {t('nav.groups')}
+              </h2>
+              <Link href="/groups" className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+                {t('common.viewAll')}
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              {groups.map(g => {
+                const c = g.direction_color ? colorOf(g.direction_color as AccentColor) : null;
+                return (
+                  <Link key={g.id} href={`/groups/${g.id}`}
+                    className={cn(
+                      'group relative flex flex-col bg-white dark:bg-gray-900 rounded-xl border overflow-hidden shadow-sm p-4',
+                      'transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5',
+                      c ? c.border : 'border-gray-200 dark:border-gray-800'
+                    )}
+                  >
+                    {/* Colour accent */}
+                    <div className={cn('absolute left-0 top-0 bottom-0 w-1', c ? c.solid : 'bg-gray-200 dark:bg-gray-700')} />
+
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-semibold text-sm text-gray-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                        {g.name}
+                      </h3>
+                      {g.direction_name && (
+                        <span className={cn('shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium', c ? cn(c.bg, c.text) : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400')}>
+                          {g.direction_name}
+                        </span>
+                      )}
+                    </div>
+
+                    {g.branch_name && (
+                      <p className="flex items-center gap-1 text-xs text-gray-400 truncate mt-1">
+                        <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                        {g.branch_name}
+                      </p>
+                    )}
+
+                    <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                      <span className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 truncate min-w-0">
+                        <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                        <span className="truncate">{g.teacher_name || '—'}</span>
+                      </span>
+                      <span className={cn('shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold', c ? cn(c.bg, c.text) : 'bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-300')}>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                        {g.student_count}/{g.max_students}
+                      </span>
                     </div>
                   </Link>
                 );
@@ -338,6 +387,97 @@ export default function DashboardPage() {
               })
             )}
           </div>
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+}
+
+// ---- Student dashboard: the student's own attendance over the last 7 days ----
+interface OwnStats { total: number; present: number; absent: number; late: number; avgLate: number; attendancePct: number; }
+interface OwnRec { id: string; session_date: string; group_name: string; status: string; late_minutes: number; teacher_name: string; }
+
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+function StudentDashboard({ userId, firstName }: { userId: string; firstName?: string }) {
+  const { t } = useI18n();
+  const [stats, setStats] = useState<OwnStats | null>(null);
+  const [records, setRecords] = useState<OwnRec[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 6); // last 7 days, inclusive of today
+    api.get<{ records: OwnRec[]; stats: OwnStats }>(
+      `/api/attendance/student/${userId}`,
+      { from_date: ymd(from), to_date: ymd(to) }
+    )
+      .then(d => { setStats(d.stats); setRecords(d.records); })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [userId]);
+
+  const statusStyle: Record<string, string> = {
+    present: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300',
+    absent: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+    late: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  };
+
+  // Last-7-days counts: how many times present / late / absent
+  const cards = [
+    { l: t('attendance.present'), v: stats?.present ?? 0, c: 'bg-green-50 border-green-200 text-green-700 dark:bg-green-950/30 dark:border-green-800 dark:text-green-300' },
+    { l: t('attendance.late'), v: stats?.late ?? 0, c: 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300' },
+    { l: t('attendance.absent'), v: stats?.absent ?? 0, c: 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/30 dark:border-red-800 dark:text-red-300' },
+  ];
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+            {t('dashboard.welcome')}, {firstName}
+          </h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </p>
+        </div>
+
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">{t('dashboard.last7Days')}</h2>
+          <div className="grid grid-cols-3 gap-4">
+            {cards.map((c, i) => (
+              <div key={i} className={`rounded-lg border p-5 ${c.c}`}>
+                <p className="text-2xl font-semibold">{loading ? '—' : c.v}</p>
+                <p className="text-xs mt-1 opacity-80">{c.l}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{t('dashboard.last7Days')}</h2>
+          </div>
+          {loading ? (
+            <div className="px-5 py-10 text-center text-sm text-gray-400">{t('common.loading')}</div>
+          ) : records.length === 0 ? (
+            <div className="px-5 py-10 text-center text-sm text-gray-400">{t('attendance.noSessions')}</div>
+          ) : (
+            <div className="divide-y divide-gray-100 dark:divide-gray-800">
+              {records.map(r => (
+                <div key={r.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">{formatDate(r.session_date)}</p>
+                    <p className="text-xs text-gray-400 truncate">{r.group_name}{r.teacher_name ? ` · ${r.teacher_name}` : ''}</p>
+                  </div>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${statusStyle[r.status] || ''}`}>
+                    {t(`attendance.${r.status}`)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </DashboardLayout>

@@ -7,27 +7,41 @@ import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Modal } from '@/components/ui/Modal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Badge } from '@/components/ui/Badge';
 import { Table } from '@/components/ui/Table';
 import { Pagination } from '@/components/ui/Pagination';
+import { getDayName, formatDate, cn } from '@/lib/utils';
 import Link from 'next/link';
 
 interface Group {
   id: string; name: string; branch_id: string; branch_name: string;
+  direction_id: string | null; direction_name: string | null;
   teacher_id: string | null; teacher_name: string | null;
-  student_count: string; max_students: number; is_active: boolean; created_at: string;
+  student_count: string; max_students: number; is_active: boolean; start_date: string | null; created_at: string;
 }
 interface Branch { id: string; name: string; }
 interface Teacher { id: string; first_name: string; last_name: string; }
+interface DirectionLite { id: string; name: string; }
 
 interface GroupForm {
-  name: string; branch_id: string; teacher_id: string; description: string; max_students: number; is_active: boolean;
+  name: string; branch_id: string; direction_id: string; teacher_id: string; description: string; max_students: number; is_active: boolean;
+  start_date: string; schedule_days: number[]; start_time: string; end_time: string;
 }
 
-const empty: GroupForm = { name: '', branch_id: '', teacher_id: '', description: '', max_students: 30, is_active: true };
+const empty: GroupForm = { name: '', branch_id: '', direction_id: '', teacher_id: '', description: '', max_students: 30, is_active: true, start_date: '', schedule_days: [], start_time: '09:00', end_time: '11:00' };
+
+// Mon..Sat, Sun — display order for the weekday picker (DB uses 0=Sun..6=Sat)
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+// Lesson-day presets
+const PRESETS: { key: string; days: number[] }[] = [
+  { key: 'everyDay', days: [1, 2, 3, 4, 5, 6] }, // Har kuni (Mon–Sat)
+  { key: 'mwf', days: [1, 3, 5] },               // Du · Chor · Juma (ora kun)
+  { key: 'tts', days: [2, 4, 6] },               // Se · Pay · Sha (ora kun)
+];
+const sameDays = (a: number[], b: number[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
 
 export default function GroupsPage() {
   const { t } = useI18n();
@@ -43,6 +57,7 @@ export default function GroupsPage() {
   const [search, setSearch] = useState('');
   const [branches, setBranches] = useState<Branch[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [directions, setDirections] = useState<DirectionLite[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
   const [form, setForm] = useState<GroupForm>(empty);
@@ -76,22 +91,49 @@ export default function GroupsPage() {
     }
   }, [canEdit, user]);
 
+  // Directions depend on the chosen branch (Branch -> Direction -> Group)
+  useEffect(() => {
+    if (!canEdit || !form.branch_id) { setDirections([]); return; }
+    api.get<{ data: DirectionLite[] }>('/api/directions', { branch_id: form.branch_id })
+      .then(d => setDirections(d.data)).catch(() => setDirections([]));
+  }, [canEdit, form.branch_id]);
+
   const openCreate = () => {
     setEditing(null);
     setForm({ ...empty, branch_id: user?.branch_id || '' });
     setModalOpen(true);
   };
-  const openEdit = (g: Group) => {
+  const openEdit = async (g: Group) => {
     setEditing(g);
-    setForm({ name: g.name, branch_id: g.branch_id, teacher_id: g.teacher_id || '', description: '', max_students: g.max_students, is_active: g.is_active });
+    setForm({ name: g.name, branch_id: g.branch_id, direction_id: g.direction_id || '', teacher_id: g.teacher_id || '', description: '', max_students: g.max_students, is_active: g.is_active, start_date: g.start_date ? g.start_date.slice(0, 10) : '', schedule_days: [], start_time: '09:00', end_time: '11:00' });
     setModalOpen(true);
+    // Prefill the lesson days/time from the group's existing schedule
+    try {
+      const detail = await api.get<{ schedules: Array<{ day_of_week: number; start_time: string; end_time: string }> }>(`/api/groups/${g.id}`);
+      if (detail.schedules?.length) {
+        const days = [...new Set(detail.schedules.map(s => s.day_of_week))];
+        setForm(f => ({ ...f, schedule_days: days, start_time: detail.schedules[0].start_time.slice(0, 5), end_time: detail.schedules[0].end_time.slice(0, 5) }));
+      }
+    } catch { /* schedule is optional */ }
   };
+
+  const toggleDay = (d: number) =>
+    setForm(f => ({ ...f, schedule_days: f.schedule_days.includes(d) ? f.schedule_days.filter(x => x !== d) : [...f.schedule_days, d] }));
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.branch_id) return toast(t('errors.required'), 'error');
     setSaving(true);
     try {
-      const payload = { ...form, teacher_id: form.teacher_id || null, branch_id: form.branch_id };
+      const payload = {
+        ...form,
+        teacher_id: form.teacher_id || null,
+        branch_id: form.branch_id,
+        direction_id: form.direction_id || null,
+        start_date: form.start_date || null,
+        schedule_days: form.schedule_days,
+        start_time: form.start_time,
+        end_time: form.end_time,
+      };
       if (editing) {
         await api.put(`/api/groups/${editing.id}`, payload);
         toast(t('groups.updated'), 'success');
@@ -119,12 +161,15 @@ export default function GroupsPage() {
 
   const columns = [
     { key: 'name', header: t('groups.groupName'), render: (g: Group) => (
-      <Link href={`/groups/${g.id}`} className="font-medium text-indigo-600 dark:text-indigo-400 hover:underline">{g.name}</Link>
+      <Link href={`/groups/${g.id}`} className="font-medium text-blue-600 dark:text-blue-400 hover:underline">{g.name}</Link>
     )},
     { key: 'branch_name', header: t('common.branch'), render: (g: Group) => <span>{g.branch_name}</span> },
     { key: 'teacher_name', header: t('groups.teacher'), render: (g: Group) => <span>{g.teacher_name || '—'}</span> },
     { key: 'capacity', header: t('groups.capacity'), render: (g: Group) => (
       <span className="text-sm">{g.student_count}/{g.max_students}</span>
+    )},
+    { key: 'start_date', header: t('groups.startDate'), render: (g: Group) => (
+      <span className="text-sm text-gray-500">{formatDate(g.start_date)}</span>
     )},
     { key: 'is_active', header: t('common.status'), render: (g: Group) => (
       <Badge variant={g.is_active ? 'success' : 'default'}>{g.is_active ? t('common.active') : t('common.inactive')}</Badge>
@@ -181,7 +226,7 @@ export default function GroupsPage() {
           </svg>
           <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
             placeholder={t('common.search')}
-            className="w-full pl-10 pr-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white" />
+            className="w-full pl-10 pr-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white" />
         </div>
 
         <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
@@ -194,24 +239,97 @@ export default function GroupsPage() {
         <div className="space-y-4">
           <Input label={t('groups.groupName')} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
           {user?.role === 'super_admin' && (
-            <Select
+            <SearchableSelect
               label={t('common.branch')}
               value={form.branch_id}
-              onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}
+              onChange={v => setForm(f => ({ ...f, branch_id: v, direction_id: '' }))}
               placeholder="Select branch"
+              searchPlaceholder={t('common.search')}
+              emptyMessage={t('common.noData')}
               options={branches.map(b => ({ value: b.id, label: b.name }))}
               required
             />
           )}
-          <Select
+          {form.branch_id && (
+            <SearchableSelect
+              label={t('nav.directions')}
+              value={form.direction_id}
+              onChange={v => setForm(f => ({ ...f, direction_id: v }))}
+              placeholder={`— ${t('common.optional')} —`}
+              searchPlaceholder={t('common.search')}
+              emptyMessage={t('common.noData')}
+              options={directions.map(d => ({ value: d.id, label: d.name }))}
+            />
+          )}
+          <SearchableSelect
             label={t('groups.teacher')}
             value={form.teacher_id}
-            onChange={e => setForm(f => ({ ...f, teacher_id: e.target.value }))}
+            onChange={v => setForm(f => ({ ...f, teacher_id: v }))}
             placeholder={`— ${t('common.optional')} —`}
-            options={teachers.map(t => ({ value: t.id, label: `${t.first_name} ${t.last_name}` }))}
+            searchPlaceholder={t('common.search')}
+            emptyMessage={t('common.noData')}
+            options={teachers.map(tch => ({ value: tch.id, label: `${tch.first_name} ${tch.last_name}` }))}
           />
           <Input label={t('groups.maxStudents')} type="number" value={form.max_students}
             onChange={e => setForm(f => ({ ...f, max_students: parseInt(e.target.value) || 30 }))} />
+          {/* Start date — left blank, the server auto-fills today's date */}
+          <Input label={t('groups.startDate')} type="date" value={form.start_date}
+            hint={t('groups.startDateHint')}
+            onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} />
+
+          {/* Lesson days — drives the attendance register (a month of cells opens automatically) */}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('schedule.lessonDays')}</label>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS.map(p => {
+                const active = sameDays(form.schedule_days, p.days);
+                const label = p.key === 'everyDay'
+                  ? t('schedule.everyDay')
+                  : p.days.map(d => getDayName(d, t).slice(0, 3)).join(' · ');
+                return (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, schedule_days: p.days }))}
+                    className={cn('px-2.5 py-1 text-xs rounded-full border transition-colors',
+                      active
+                        ? 'bg-blue-600 border-blue-600 text-white'
+                        : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800')}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEK_ORDER.map(d => {
+                const active = form.schedule_days.includes(d);
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => toggleDay(d)}
+                    title={getDayName(d, t)}
+                    className={cn('w-11 py-1.5 text-xs font-medium rounded border transition-colors',
+                      active
+                        ? 'bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-900/30 dark:border-blue-500 dark:text-blue-300'
+                        : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800')}
+                  >
+                    {getDayName(d, t).slice(0, 3)}
+                  </button>
+                );
+              })}
+            </div>
+            {form.schedule_days.length > 0 && (
+              <div className="grid grid-cols-2 gap-3 mt-1">
+                <Input label={t('schedule.startTime')} type="time" value={form.start_time}
+                  onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
+                <Input label={t('schedule.endTime')} type="time" value={form.end_time}
+                  onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+              </div>
+            )}
+          </div>
+
           {editing && (
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />

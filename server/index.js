@@ -28,6 +28,7 @@ app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/schedules', require('./routes/schedules'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/settings', require('./routes/settings'));
 app.use('/api/upload', require('./routes/upload'));
 
 // Health check

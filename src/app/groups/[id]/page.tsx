@@ -7,21 +7,21 @@ import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { Select } from '@/components/ui/Select';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
-import { formatTime, getDayName } from '@/lib/utils';
+import { formatTime, formatDate, getDayName, cn } from '@/lib/utils';
+import { downloadFile } from '@/lib/download';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 interface GroupDetail {
   id: string; name: string; branch_name: string; teacher_name: string | null;
-  student_count: string; max_students: number; is_active: boolean; description: string | null;
+  student_count: string; max_students: number; is_active: boolean; description: string | null; start_date: string | null;
   students: Array<{ id: string; first_name: string; last_name: string; username: string; avatar_url: string | null }>;
   schedules: Array<{ id: string; day_of_week: number; start_time: string; end_time: string; classroom: string | null }>;
 }
 
-interface Student { id: string; first_name: string; last_name: string; username: string; }
+interface Student { id: string; first_name: string; last_name: string; username: string; avatar_url: string | null; }
 
 export default function GroupDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -34,7 +34,8 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   const [loading, setLoading] = useState(true);
   const [addStudentOpen, setAddStudentOpen] = useState(false);
   const [availableStudents, setAvailableStudents] = useState<Student[]>([]);
-  const [selectedStudent, setSelectedStudent] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [studentSearch, setStudentSearch] = useState('');
   const [adding, setAdding] = useState(false);
 
   const [exportDate, setExportDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -46,21 +47,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   const handleExport = async () => {
     setExporting(true);
     try {
-      const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-      const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
-      const res = await window.fetch(`${base}/api/attendance/export?group_id=${id}&date=${exportDate}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Export failed');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `attendance-${exportDate}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadFile(`/api/attendance/export?group_id=${id}&date=${exportDate}`, `attendance-${exportDate}.xlsx`);
     } catch (e) { toast((e as Error).message, 'error'); }
     finally { setExporting(false); }
   };
@@ -78,18 +65,23 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
   const openAddStudent = async () => {
     const enrolled = group?.students.map(s => s.id) || [];
-    const data = await api.get<{ data: Student[] }>('/api/users', { role: 'student', limit: 200 });
+    const data = await api.get<{ data: Student[] }>('/api/users', { role: 'student', limit: 500 });
     setAvailableStudents(data.data.filter(s => !enrolled.includes(s.id)));
-    setSelectedStudent('');
+    setSelectedIds([]);
+    setStudentSearch('');
     setAddStudentOpen(true);
   };
 
-  const handleAddStudent = async () => {
-    if (!selectedStudent) return;
+  const toggleSelect = (sid: string) => {
+    setSelectedIds(prev => prev.includes(sid) ? prev.filter(x => x !== sid) : [...prev, sid]);
+  };
+
+  const handleAddStudents = async () => {
+    if (!selectedIds.length) return;
     setAdding(true);
     try {
-      await api.post(`/api/groups/${id}/students`, { student_id: selectedStudent });
-      toast(t('groups.addStudent') + ' successful', 'success');
+      await api.post(`/api/groups/${id}/students`, { student_ids: selectedIds });
+      toast(t('groups.studentsAdded'), 'success');
       setAddStudentOpen(false);
       fetchGroup();
     } catch (err) { toast((err as Error).message, 'error'); }
@@ -108,7 +100,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center py-20">
-          <svg className="animate-spin h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
+          <svg className="animate-spin h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
@@ -119,6 +111,12 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
   if (!group) return null;
 
+  const filteredStudents = availableStudents.filter(s => {
+    const q = studentSearch.trim().toLowerCase();
+    if (!q) return true;
+    return `${s.first_name} ${s.last_name}`.toLowerCase().includes(q) || s.username.toLowerCase().includes(q);
+  });
+
   return (
     <DashboardLayout>
       <div className="space-y-6 max-w-4xl mx-auto">
@@ -127,7 +125,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           variant="ghost"
           size="sm"
           onClick={() => router.back()}
-          className="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-indigo-400 transition-colors"
+          className="text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
         >
           <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -141,7 +139,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                  <span className="text-indigo-600 dark:text-indigo-400">
+                  <span className="text-blue-600 dark:text-blue-400">
                     <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                     </svg>
@@ -174,6 +172,12 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                   {group.students.length}/{group.max_students}
                 </p>
               </div>
+              <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
+                <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('groups.startDate')}</p>
+                <p className="text-sm font-medium text-gray-900 dark:text-white mt-0.5">
+                  {formatDate(group.start_date)}
+                </p>
+              </div>
               {/* <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
                 <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('groups.students')}</p>
                 <p className="text-sm font-medium text-gray-900 dark:text-white mt-0.5">
@@ -192,7 +196,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
             {canTakeAttendance && (
               <div className="mt-5 flex flex-wrap items-center gap-3 pt-4 border-t border-gray-100 dark:border-gray-800">
                 <Link href={`/attendance/group/${id}`}>
-                  <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm">
+                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm">
                     <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                     </svg>
@@ -205,7 +209,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                     type="date"
                     value={exportDate}
                     onChange={e => setExportDate(e.target.value)}
-                    className="px-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition"
+                    className="px-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition"
                   />
                   <Button
                     size="sm"
@@ -229,15 +233,15 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
         {group.schedules.length > 0 && (
           <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center gap-2">
-              <svg className="w-4 h-4 text-indigo-600 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{t('schedule.title')}</h2>
             </div>
             <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {group.schedules.map(s => (
-                <div key={s.id} className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-3 border border-indigo-100 dark:border-indigo-800/30">
-                  <div className="font-medium text-indigo-700 dark:text-indigo-300">{getDayName(s.day_of_week, t)}</div>
+                <div key={s.id} className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 border border-blue-100 dark:border-blue-800/30">
+                  <div className="font-medium text-blue-700 dark:text-blue-300">{getDayName(s.day_of_week, t)}</div>
                   <div className="text-sm text-gray-700 dark:text-gray-300">{formatTime(s.start_time)} — {formatTime(s.end_time)}</div>
                   {s.classroom && <div className="text-xs text-gray-400 mt-1 flex"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-door-open" viewBox="0 0 16 16">
                     <path d="M8.5 10c-.276 0-.5-.448-.5-1s.224-1 .5-1 .5.448.5 1-.224 1-.5 1" />
@@ -265,7 +269,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 variant="outline"
                 size="sm"
                 onClick={openAddStudent}
-                className="border-indigo-200 text-indigo-600 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/20"
+                className="border-blue-200 text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/20"
               >
                 <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -294,7 +298,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                   </div>
                   <div className="flex gap-1">
                     <Link href={`/users/${s.id}`}>
-                      <Button variant="ghost" size="sm" className="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg">
+                      <Button variant="ghost" size="sm" className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg">
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
@@ -321,27 +325,60 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
-      {/* Add student modal */}
-      <Modal open={addStudentOpen} onClose={() => setAddStudentOpen(false)} title={t('groups.addStudent')} size="sm">
-        <Select
-          label={t('nav.students')}
-          value={selectedStudent}
-          onChange={e => setSelectedStudent(e.target.value)}
-          placeholder="Select a student"
-          options={availableStudents.map(s => ({ value: s.id, label: `${s.first_name} ${s.last_name} (@${s.username})` }))}
-        />
-        <div className="flex gap-3 justify-end mt-5">
-          <Button variant="outline" onClick={() => setAddStudentOpen(false)} disabled={adding}>
-            {t('common.cancel')}
-          </Button>
-          <Button
-            onClick={handleAddStudent}
-            loading={adding}
-            disabled={!selectedStudent}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white"
-          >
-            {t('common.add')}
-          </Button>
+      {/* Add students modal — search + multi-select */}
+      <Modal open={addStudentOpen} onClose={() => setAddStudentOpen(false)} title={t('groups.addStudent')} size="lg">
+        <div className="relative mb-3">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            value={studentSearch}
+            onChange={e => setStudentSearch(e.target.value)}
+            placeholder={t('common.search')}
+            autoFocus
+            className="w-full pl-10 pr-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+          />
+        </div>
+
+        <div className="max-h-80 overflow-y-auto border border-gray-100 dark:border-gray-800 rounded divide-y divide-gray-100 dark:divide-gray-800">
+          {filteredStudents.length === 0 ? (
+            <div className="px-4 py-10 text-center text-sm text-gray-400">{t('common.noData')}</div>
+          ) : (
+            filteredStudents.map(s => {
+              const checked = selectedIds.includes(s.id);
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => toggleSelect(s.id)}
+                  className={cn('w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors',
+                    checked ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50')}
+                >
+                  <span className={cn('w-5 h-5 rounded border flex items-center justify-center shrink-0',
+                    checked ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 dark:border-gray-600')}>
+                    {checked && (
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                    )}
+                  </span>
+                  <Avatar firstName={s.first_name} lastName={s.last_name} avatarUrl={s.avatar_url} size="sm" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{s.first_name} {s.last_name}</p>
+                    <p className="text-xs text-gray-400 truncate">@{s.username}</p>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 mt-4">
+          <span className="text-xs text-gray-500 dark:text-gray-400">{selectedIds.length} {t('common.selected')}</span>
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setAddStudentOpen(false)} disabled={adding}>{t('common.cancel')}</Button>
+            <Button onClick={handleAddStudents} loading={adding} disabled={!selectedIds.length} className="bg-blue-600 hover:bg-blue-700 text-white">
+              {t('common.add')}{selectedIds.length > 0 ? ` (${selectedIds.length})` : ''}
+            </Button>
+          </div>
         </div>
       </Modal>
     </DashboardLayout>

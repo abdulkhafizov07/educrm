@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { ACCENT_COLORS, colorOf, colorLabel, type AccentColor } from '@/lib/colors';
@@ -21,14 +22,17 @@ interface Direction {
   color: string;
   logo_url: string | null;
   is_active: boolean;
-  branch_count: string;
+  branch_id: string | null;
+  branch_name: string | null;
   teacher_count: string;
   student_count: string;
   group_count: string;
 }
 
-interface DirectionForm { name: string; description: string; color: AccentColor; }
-const empty: DirectionForm = { name: '', description: '', color: 'blue' };
+interface BranchLite { id: string; name: string; }
+
+interface DirectionForm { name: string; description: string; color: AccentColor; branch_id: string; }
+const empty: DirectionForm = { name: '', description: '', color: 'blue', branch_id: '' };
 
 export default function DirectionsPage() {
   const { t, locale } = useI18n();
@@ -37,7 +41,9 @@ export default function DirectionsPage() {
   const router = useRouter();
 
   const [items, setItems] = useState<Direction[]>([]);
+  const [branches, setBranches] = useState<BranchLite[]>([]);
   const [loading, setLoading] = useState(true);
+  const canManage = user?.role === 'super_admin' || user?.role === 'branch_admin';
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Direction | null>(null);
   const [form, setForm] = useState<DirectionForm>(empty);
@@ -77,25 +83,34 @@ export default function DirectionsPage() {
   useEffect(() => { fetch(); }, [fetch]);
 
   useEffect(() => {
-    if (user && user.role !== 'super_admin') router.replace('/dashboard');
+    if (user && user.role !== 'super_admin' && user.role !== 'branch_admin') router.replace('/dashboard');
   }, [user, router]);
+
+  // Super admin picks the branch a direction belongs to
+  useEffect(() => {
+    if (user?.role === 'super_admin') {
+      api.get<{ data: BranchLite[] }>('/api/branches', { limit: 200 }).then(d => setBranches(d.data)).catch(() => {});
+    }
+  }, [user]);
 
   const openCreate = () => { setEditing(null); setForm(empty); clearLogo(); setModalOpen(true); };
   const openEdit = (d: Direction) => {
     setEditing(d);
-    setForm({ name: d.name, description: d.description || '', color: (d.color as AccentColor) || 'blue' });
+    setForm({ name: d.name, description: d.description || '', color: (d.color as AccentColor) || 'blue', branch_id: d.branch_id || '' });
     clearLogo();
     setModalOpen(true);
   };
 
   const handleSave = async () => {
     if (!form.name.trim()) return toast(t('errors.required'), 'error');
+    if (user?.role === 'super_admin' && !form.branch_id) return toast(t('errors.required'), 'error');
     setSaving(true);
     try {
       const fd = new FormData();
       fd.append('name', form.name);
       fd.append('description', form.description || '');
       fd.append('color', form.color);
+      if (user?.role === 'super_admin') fd.append('branch_id', form.branch_id);
       if (logoFile) fd.append('logo', logoFile);
 
       if (editing) {
@@ -123,7 +138,7 @@ export default function DirectionsPage() {
     finally { setDeleting(false); }
   };
 
-  if (user && user.role !== 'super_admin') return null;
+  if (user && user.role !== 'super_admin' && user.role !== 'branch_admin') return null;
 
   return (
     <DashboardLayout>
@@ -175,6 +190,7 @@ export default function DirectionsPage() {
                         </div>
                         <div className="min-w-0">
                           <h3 className="font-semibold text-gray-900 dark:text-white truncate group-hover/title:underline">{d.name}</h3>
+                          {d.branch_name && <p className="text-xs text-gray-400 truncate">{d.branch_name}</p>}
                           {d.description && <p className="text-xs text-gray-400 truncate">{d.description}</p>}
                         </div>
                       </Link>
@@ -189,7 +205,7 @@ export default function DirectionsPage() {
                     </div>
                     <Link href={`/directions/${d.id}`} className="grid grid-cols-3 gap-2 text-center">
                       {[
-                        { v: d.branch_count, l: t('directions.branches') },
+                        { v: d.group_count, l: t('branches.groups') },
                         { v: d.teacher_count, l: t('branches.teachers') },
                         { v: d.student_count, l: t('branches.students') },
                       ].map((s, i) => (
@@ -212,6 +228,16 @@ export default function DirectionsPage() {
         <div className="space-y-4">
           <Input label={t('directions.name')} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
           <Input label={t('directions.description')} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          {user?.role === 'super_admin' && (
+            <Select
+              label={t('common.branch')}
+              value={form.branch_id}
+              onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}
+              placeholder={t('common.branch')}
+              options={branches.map(b => ({ value: b.id, label: b.name }))}
+              required
+            />
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{t('directions.color')}</label>
             <div className="flex gap-2">
@@ -257,7 +283,7 @@ export default function DirectionsPage() {
                 )}
               </div>
             </div>
-            <input ref={logoInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={onLogoChange} className="hidden" />
+            <input ref={logoInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={onLogoChange} className="hidden" />
           </div>
 
           <div className="flex gap-3 justify-end pt-2">
