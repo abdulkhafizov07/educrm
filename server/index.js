@@ -25,12 +25,14 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/directions', require('./routes/directions'));
 app.use('/api/branches', require('./routes/branches'));
 app.use('/api/groups', require('./routes/groups'));
 app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/schedules', require('./routes/schedules'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/settings', require('./routes/settings'));
 app.use('/api/upload', require('./routes/upload'));
 
 // Health check

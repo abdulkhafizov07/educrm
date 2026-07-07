@@ -75,7 +75,7 @@ export default function ActivityLogPage() {
           <p className="text-sm text-gray-500 mt-0.5">{total} total events</p>
         </div>
 
-        <div className="bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-800">
+        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
           <div className="divide-y divide-gray-100 dark:divide-gray-800">
             {logs.length === 0 ? (
               <div className="px-5 py-12 text-center text-sm text-gray-400">{t('common.noData')}</div>

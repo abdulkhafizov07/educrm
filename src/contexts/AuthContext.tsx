@@ -12,6 +12,9 @@ export interface User {
   role: 'super_admin' | 'branch_admin' | 'teacher' | 'student';
   branch_id: string | null;
   branch_name: string | null;
+  branch_logo: string | null;
+  app_logo?: string | null;
+  app_name?: string | null;
   avatar_url: string | null;
   is_active: boolean;
   last_login: string | null;

@@ -6,10 +6,27 @@ const { log } = require('../utils/logger');
 const router = express.Router();
 router.use(verifyToken);
 
+// Replace a group's weekly lesson schedule with the given weekdays (0=Sun..6=Sat).
+// `days` undefined => leave existing schedule untouched; [] => clear it.
+async function replaceSchedules(groupId, days, startTime, endTime) {
+  if (!Array.isArray(days)) return;
+  await query('DELETE FROM schedules WHERE group_id = $1', [groupId]);
+  const valid = [...new Set(days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))];
+  if (!valid.length) return;
+  const start = startTime || '09:00';
+  const end = endTime || '11:00';
+  for (const d of valid) {
+    await query(
+      'INSERT INTO schedules (group_id, day_of_week, start_time, end_time) VALUES ($1, $2, $3, $4)',
+      [groupId, d, start, end]
+    );
+  }
+}
+
 // GET /api/groups
 router.get('/', async (req, res) => {
   try {
-    const { branch_id, teacher_id, search, is_active, page = 1, limit = 20 } = req.query;
+    const { branch_id, direction_id, teacher_id, student_id, search, is_active, page = 1, limit = 20 } = req.query;
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -21,15 +38,18 @@ router.get('/', async (req, res) => {
       conditions.push(`g.teacher_id = $${idx++}`); params.push(req.user.id);
     } else if (req.user.role === 'student') {
       conditions.push(`gs.student_id = $${idx++}`); params.push(req.user.id);
-    } else {
-      if (branch_id) { conditions.push(`g.branch_id = $${idx++}`); params.push(branch_id); }
+    } else if (branch_id) {
+      conditions.push(`g.branch_id = $${idx++}`); params.push(branch_id);
     }
 
+    // Admins can look up a specific student's groups (e.g. the graduate-a-student flow)
+    if (student_id && req.user.role !== 'student') { conditions.push(`gs.student_id = $${idx++}`); params.push(student_id); }
+    if (direction_id) { conditions.push(`g.direction_id = $${idx++}`); params.push(direction_id); }
     if (teacher_id) { conditions.push(`g.teacher_id = $${idx++}`); params.push(teacher_id); }
     if (is_active !== undefined) { conditions.push(`g.is_active = $${idx++}`); params.push(is_active === 'true'); }
     if (search) { conditions.push(`g.name ILIKE $${idx++}`); params.push(`%${search}%`); }
 
-    const studentJoin = req.user.role === 'student' ? 'JOIN group_students gs ON gs.group_id = g.id' : 'LEFT JOIN group_students gs ON gs.group_id = g.id';
+    const studentJoin = (req.user.role === 'student' || student_id) ? 'JOIN group_students gs ON gs.group_id = g.id' : 'LEFT JOIN group_students gs ON gs.group_id = g.id';
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const countRes = await query(
@@ -38,16 +58,17 @@ router.get('/', async (req, res) => {
     const total = parseInt(countRes.rows[0].count);
 
     const { rows } = await query(
-      `SELECT g.*, b.name as branch_name,
+      `SELECT g.*, b.name as branch_name, dir.name as direction_name, dir.color as direction_color,
          CONCAT(t.first_name, ' ', t.last_name) as teacher_name,
          COUNT(DISTINCT gs2.student_id) as student_count
        FROM groups g
        LEFT JOIN branches b ON g.branch_id = b.id
+       LEFT JOIN directions dir ON g.direction_id = dir.id
        LEFT JOIN users t ON g.teacher_id = t.id
        ${studentJoin}
        LEFT JOIN group_students gs2 ON gs2.group_id = g.id
        ${where}
-       GROUP BY g.id, b.name, t.first_name, t.last_name
+       GROUP BY g.id, b.name, dir.name, dir.color, t.first_name, t.last_name
        ORDER BY g.created_at DESC
        LIMIT $${idx} OFFSET $${idx + 1}`,
       [...params, parseInt(limit), offset]
@@ -65,10 +86,11 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { rows } = await query(
-      `SELECT g.*, b.name as branch_name,
+      `SELECT g.*, b.name as branch_name, dir.name as direction_name, dir.color as direction_color,
          CONCAT(t.first_name, ' ', t.last_name) as teacher_name, t.id as teacher_user_id
        FROM groups g
        LEFT JOIN branches b ON g.branch_id = b.id
+       LEFT JOIN directions dir ON g.direction_id = dir.id
        LEFT JOIN users t ON g.teacher_id = t.id
        WHERE g.id = $1`,
       [id]
@@ -76,6 +98,9 @@ router.get('/:id', async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Group not found' });
 
     if (req.user.role === 'branch_admin' && rows[0].branch_id !== req.user.branch_id) return res.status(403).json({ error: 'Access denied' });
+    // Teachers may only open their own groups; students don't browse group rosters at all
+    if (req.user.role === 'teacher' && rows[0].teacher_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+    if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
 
     // Get students in this group
     const { rows: students } = await query(
@@ -98,16 +123,22 @@ router.get('/:id', async (req, res) => {
 // POST /api/groups
 router.post('/', requireRole('super_admin', 'branch_admin'), async (req, res) => {
   try {
-    const { name, branch_id, teacher_id, description, max_students } = req.body;
+    const { name, branch_id, direction_id, teacher_id, description, max_students,
+            start_date, schedule_days, start_time, end_time } = req.body;
     if (!name || !branch_id) return res.status(400).json({ error: 'Name and branch_id required' });
 
     if (req.user.role === 'branch_admin' && branch_id !== req.user.branch_id) return res.status(403).json({ error: 'Access denied' });
 
+    // start_date left blank => fall back to today (COALESCE keeps the column's default behaviour)
     const { rows } = await query(
-      `INSERT INTO groups (name, branch_id, teacher_id, description, max_students)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [name, branch_id, teacher_id || null, description || null, max_students || 30]
+      `INSERT INTO groups (name, branch_id, direction_id, teacher_id, description, max_students, start_date)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, CURRENT_DATE)) RETURNING *`,
+      [name, branch_id, direction_id || null, teacher_id || null, description || null, max_students || 30, start_date || null]
     );
+
+    // Lesson days -> weekly schedule, so the attendance register auto-opens the month's cells
+    await replaceSchedules(rows[0].id, schedule_days, start_time, end_time);
+
     await log(req.user.id, 'GROUP_CREATED', 'group', rows[0].id, { name }, req.ip);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -120,7 +151,8 @@ router.post('/', requireRole('super_admin', 'branch_admin'), async (req, res) =>
 router.put('/:id', requireRole('super_admin', 'branch_admin'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, teacher_id, description, max_students, is_active } = req.body;
+    const { name, teacher_id, description, max_students, is_active, direction_id,
+            start_date, schedule_days, start_time, end_time } = req.body;
 
     const { rows: existing } = await query('SELECT * FROM groups WHERE id = $1', [id]);
     if (!existing.length) return res.status(404).json({ error: 'Group not found' });
@@ -128,15 +160,22 @@ router.put('/:id', requireRole('super_admin', 'branch_admin'), async (req, res) 
 
     const updates = []; const params = []; let idx = 1;
     if (name !== undefined) { updates.push(`name = $${idx++}`); params.push(name); }
+    if (direction_id !== undefined) { updates.push(`direction_id = $${idx++}`); params.push(direction_id || null); }
     if (teacher_id !== undefined) { updates.push(`teacher_id = $${idx++}`); params.push(teacher_id || null); }
     if (description !== undefined) { updates.push(`description = $${idx++}`); params.push(description); }
     if (max_students !== undefined) { updates.push(`max_students = $${idx++}`); params.push(max_students); }
+    if (start_date !== undefined) { updates.push(`start_date = COALESCE($${idx++}, CURRENT_DATE)`); params.push(start_date || null); }
     if (is_active !== undefined) { updates.push(`is_active = $${idx++}`); params.push(is_active); }
 
-    if (!updates.length) return res.status(400).json({ error: 'No fields to update' });
-    params.push(id);
+    if (updates.length) {
+      params.push(id);
+      await query(`UPDATE groups SET ${updates.join(', ')} WHERE id = $${idx}`, params);
+    }
 
-    const { rows } = await query(`UPDATE groups SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`, params);
+    // Update the weekly lesson schedule when the form sends it (array). Undefined = leave as-is.
+    await replaceSchedules(id, schedule_days, start_time, end_time);
+
+    const { rows } = await query('SELECT * FROM groups WHERE id = $1', [id]);
     await log(req.user.id, 'GROUP_UPDATED', 'group', id, null, req.ip);
     res.json(rows[0]);
   } catch (err) {
@@ -159,23 +198,32 @@ router.delete('/:id', requireRole('super_admin', 'branch_admin'), async (req, re
   }
 });
 
-// POST /api/groups/:id/students
+// POST /api/groups/:id/students — add one (student_id) or many (student_ids[]) at once
 router.post('/:id/students', requireRole('super_admin', 'branch_admin'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { student_id } = req.body;
-    if (!student_id) return res.status(400).json({ error: 'student_id required' });
+    const ids = Array.isArray(req.body.student_ids)
+      ? req.body.student_ids.filter(Boolean)
+      : (req.body.student_id ? [req.body.student_id] : []);
+    if (!ids.length) return res.status(400).json({ error: 'student_id(s) required' });
 
     const { rows: group } = await query('SELECT * FROM groups WHERE id = $1', [id]);
     if (!group.length) return res.status(404).json({ error: 'Group not found' });
     if (req.user.role === 'branch_admin' && group[0].branch_id !== req.user.branch_id) return res.status(403).json({ error: 'Access denied' });
 
     const { rows: countRows } = await query('SELECT COUNT(*) FROM group_students WHERE group_id = $1', [id]);
-    if (parseInt(countRows[0].count) >= group[0].max_students) return res.status(400).json({ error: 'Group is at maximum capacity' });
+    const room = group[0].max_students - parseInt(countRows[0].count);
+    if (room <= 0) return res.status(400).json({ error: 'Group is at maximum capacity' });
 
-    await query('INSERT INTO group_students (group_id, student_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, student_id]);
-    await log(req.user.id, 'STUDENT_ADDED_TO_GROUP', 'group', id, { student_id }, req.ip);
-    res.json({ success: true });
+    // Don't exceed capacity even if more were selected
+    const toAdd = ids.slice(0, room);
+    let added = 0;
+    for (const sid of toAdd) {
+      const r = await query('INSERT INTO group_students (group_id, student_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, sid]);
+      added += r.rowCount;
+    }
+    await log(req.user.id, 'STUDENT_ADDED_TO_GROUP', 'group', id, { count: added }, req.ip);
+    res.json({ success: true, added });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

@@ -25,6 +25,7 @@
     "of": "dan",
     "rows": "qator",
     "total": "Jami",
+    "viewAll": "Barchasi",
     "create": "Yaratish",
     "update": "Yangilash",
     "view": "Ko'rish",
@@ -55,7 +56,8 @@
     "never": "Hech qachon",
     "upload": "Yuklash",
     "remove": "O'chirish",
-    "sending": "Yuborilmoqda..."
+    "sending": "Yuborilmoqda...",
+    "selected": "tanlandi"
   },
   "auth": {
     "login": "Kirish",
@@ -74,6 +76,7 @@
   },
   "nav": {
     "dashboard": "Boshqaruv paneli",
+    "directions": "Yo'nalishlar",
     "users": "Foydalanuvchilar",
     "branches": "Filiallar",
     "groups": "Guruhlar",
@@ -81,6 +84,8 @@
     "schedule": "Dars jadvali",
     "notifications": "Bildirishnomalar",
     "activityLog": "Faoliyat jurnali",
+    "staff": "Hodimlar",
+    "graduates": "Bitiruvchilar",
     "students": "Talabalar",
     "teachers": "O'qituvchilar",
     "profile": "Mening profilim"
@@ -98,7 +103,8 @@
     "present": "Keldi",
     "absent": "Kelmadi",
     "late": "Kech keldi",
-    "attendanceRate": "Davomat foizi"
+    "attendanceRate": "Davomat foizi",
+    "last7Days": "Oxirgi 7 kun"
   },
   "branches": {
     "title": "Filiallar",
@@ -110,9 +116,31 @@
     "students": "Talabalar",
     "teachers": "O'qituvchilar",
     "groups": "Guruhlar",
+    "logo": "Filial logotipi",
+    "uploadLogo": "Yuklash",
+    "logoHint": "PNG, JPG yoki WEBP, 5MB gacha",
+    "currentLogo": "Joriy logotip",
+    "direction": "Yo'nalish",
+    "noDirection": "Yo'nalishsiz",
+    "colors": "Karta ranglari",
     "created": "Filial muvaffaqiyatli yaratildi",
     "updated": "Filial muvaffaqiyatli yangilandi",
     "deleted": "Filial muvaffaqiyatli o'chirildi"
+  },
+  "directions": {
+    "title": "Yo'nalishlar",
+    "add": "Yo'nalish qo'shish",
+    "edit": "Yo'nalishni tahrirlash",
+    "delete": "Yo'nalishni o'chirish",
+    "deleteConfirm": "Bu yo'nalishni o'chirishni xohlaysizmi?",
+    "name": "Yo'nalish nomi",
+    "description": "Tavsif",
+    "color": "Rang",
+    "branches": "Filiallar",
+    "branchesIn": "Ushbu yo'nalishdagi filiallar",
+    "created": "Yo'nalish muvaffaqiyatli yaratildi",
+    "updated": "Yo'nalish muvaffaqiyatli yangilandi",
+    "deleted": "Yo'nalish muvaffaqiyatli o'chirildi"
   },
   "users": {
     "title": "Foydalanuvchilar",
@@ -128,6 +156,28 @@
     "userDeleted": "Foydalanuvchi muvaffaqiyatli o'chirildi",
     "deactivate": "Faolsizlantirish",
     "activate": "Faollashtirish",
+    "joinDateHint": "Bo'sh qoldirilsa, avtomatik hozirgi sana qo'yiladi",
+    "studentsTitle": "O'quvchilar",
+    "staffTitle": "Hodimlar",
+    "graduatesTitle": "Bitiruvchilar",
+    "graduate": "Bitirdi",
+    "graduateNote": "Izoh",
+    "graduateGroup": "Guruh",
+    "graduateSaved": "Bitiruvchi ma'lumotlari saqlandi",
+    "graduated": "Bitirgan",
+    "graduatedAt": "Bitirgan sana",
+    "revertGraduation": "Bekor qilish",
+    "revertGraduationConfirm": "Bitirishni bekor qilishga ishonchingiz komilmi? Talaba qaytadan faol o'quvchilar ro'yxatiga qaytadi.",
+    "graduationReverted": "Bitirish bekor qilindi",
+    "exportExcel": "Excel yuklab olish",
+    "dateFrom": "Sanadan",
+    "dateTo": "Sanagacha",
+    "address": "Yashash manzili",
+    "motherPhone": "Ota-onasining telefon raqami",
+    "fatherName": "Otasining ismi",
+    "motherName": "Onasining ismi",
+    "birthYear": "Tug'ilgan yil",
+    "age": "Yosh",
     "roles": {
       "super_admin": "Super Admin",
       "branch_admin": "Filial Admini",
@@ -144,17 +194,23 @@
     "groupName": "Guruh nomi",
     "teacher": "O'qituvchi",
     "maxStudents": "Maks. talabalar",
+    "startDate": "Qo'shilgan sana",
+    "startDateHint": "Bo'sh qoldirilsa, avtomatik bugungi sana qo'yiladi",
     "enrolledStudents": "Ro'yxatga olingan talabalar",
     "addStudent": "Talaba qo'shish",
     "removeStudent": "Talabani chiqarish",
     "created": "Guruh muvaffaqiyatli yaratildi",
     "updated": "Guruh muvaffaqiyatli yangilandi",
     "deleted": "Guruh muvaffaqiyatli o'chirildi",
-    "capacity": "Sig'im"
+    "capacity": "Sig'im",
+    "studentsAdded": "O'quvchilar guruhga qo'shildi"
   },
   "attendance": {
     "title": "Davomat",
     "takeAttendance": "Davomat olish",
+    "selectGroup": "Guruhni tanlang",
+    "openRegister": "Jurnalni ochish",
+    "noGroups": "Guruhlar mavjud emas",
     "attendanceFor": "Davomat:",
     "sessionDate": "Dars sanasi",
     "classStart": "Dars boshlanish vaqti",
@@ -173,7 +229,30 @@
     "totalAbsent": "Jami kelmadi",
     "totalLate": "Jami kech keldi",
     "avgLateMinutes": "O'rt. kechikish (daqiqa)",
-    "noSessions": "Darslar topilmadi"
+    "avgGrade": "O'rt. test bali",
+    "noSessions": "Darslar topilmadi",
+    "register": "Davomat jurnali",
+    "exam": "Imtihon",
+    "markExam": "Imtihon kuni qilish/bekor qilish",
+    "examHint": "Kun ustidagi T tugmasini bosib imtihon qiling — o'sha kuni baho (0–100) qo'yiladi",
+    "grade": "Baho",
+    "exportExcel": "Excel yuklab olish",
+    "selectDate": "Sanani tanlang",
+    "noSchedule": "Bu guruh uchun dars jadvali yo'q. Davomat olish uchun jadval qo'shing.",
+    "noStudents": "Bu guruhda hali o'quvchilar yo'q.",
+    "marked": "Belgilangan",
+    "legend": "Katakni bosing: keldi → kech qoldi → kelmadi",
+    "prevMonth": "Oldingi oy",
+    "nextMonth": "Keyingi oy",
+    "unmarked": "Belgilanmagan",
+    "markAllPresent": "Hammasini keldi",
+    "saved": "Saqlandi",
+    "noDates": "Bu oyda dars kunlari yo'q.",
+    "overview": "Umumiy statistika",
+    "monthlyView": "Oylik jadval",
+    "overviewView": "Umumiy statistika",
+    "totalSessions": "jami dars",
+    "lastSession": "Oxirgi dars"
   },
   "schedule": {
     "title": "Dars jadvali",
@@ -184,6 +263,8 @@
     "startTime": "Boshlanish vaqti",
     "endTime": "Tugash vaqti",
     "classroom": "Xona",
+    "lessonDays": "Dars kunlari",
+    "everyDay": "Har kuni",
     "days": {
       "0": "Yakshanba",
       "1": "Dushanba",
@@ -202,7 +283,16 @@
     "recipient": "Qabul qiluvchi",
     "notificationTitle": "Sarlavha",
     "message": "Xabar",
-    "type": "Tur"
+    "type": "Tur",
+    "audience": "Kimga yuborish",
+    "individual": "Bitta foydalanuvchi",
+    "allStudents": "Barcha o'quvchilar",
+    "allTeachers": "Barcha o'qituvchilar",
+    "byBranch": "Filial bo'yicha",
+    "selectBranch": "Filialni tanlang",
+    "selectRecipients": "Qabul qiluvchilarni tanlang",
+    "searchUsers": "Ism yoki username bo'yicha qidiring...",
+    "noResults": "Hech narsa topilmadi"
   },
   "profile": {
     "title": "Mening profilim",
@@ -211,7 +301,9 @@
     "security": "Xavfsizlik",
     "avatar": "Profil rasmi",
     "changeAvatar": "Rasmni o'zgartirish",
-    "memberSince": "A'zo bo'lgan sana"
+    "memberSince": "A'zo bo'lgan sana",
+    "appBranding": "Ilova logosi",
+    "appName": "Ilova nomi"
   },
   "errors": {
     "generic": "Xato yuz berdi. Qaytadan urinib ko'ring.",
@@ -220,6 +312,7 @@
     "notFound": "So'ralgan resurs topilmadi.",
     "required": "Bu maydon majburiy.",
     "minLength": "Kamida {min} ta belgi bo'lishi kerak.",
-    "passwordMismatch": "Parollar mos kelmaydi."
+    "passwordMismatch": "Parollar mos kelmaydi.",
+    "fileTooLarge": "Fayl juda katta. Maksimal hajmi 5MB."
   }
 }

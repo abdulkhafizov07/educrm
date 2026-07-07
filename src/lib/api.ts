@@ -4,6 +4,7 @@ interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
 }
 
+// JSON soʻrovlar uchun asosiy funksiya
 async function request<T = unknown>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   const { params, ...init } = options;
 
@@ -28,7 +29,6 @@ async function request<T = unknown>(endpoint: string, options: RequestOptions = 
   const res = await fetch(url, { ...init, headers });
 
   if (res.status === 401) {
-    // Try refresh
     const refreshed = await tryRefresh();
     if (refreshed) {
       headers['Authorization'] = `Bearer ${localStorage.getItem('accessToken')}`;
@@ -55,6 +55,7 @@ async function request<T = unknown>(endpoint: string, options: RequestOptions = 
   return res.json();
 }
 
+// Token yangilash
 async function tryRefresh(): Promise<boolean> {
   const refreshToken = localStorage.getItem('refreshToken');
   if (!refreshToken) return false;
@@ -74,7 +75,59 @@ async function tryRefresh(): Promise<boolean> {
   }
 }
 
+// FormData (rasm va fayllar) uchun alohida funksiya
+async function requestFormData<T = unknown>(
+  endpoint: string,
+  method: 'POST' | 'PUT',
+  formData: FormData
+): Promise<T> {
+  const url = `${API_BASE}${endpoint}`;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
+
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  // Content-Type qo'yilmaydi – brauzer o'zi multipart/form-data qilib yuboradi
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: formData,
+  });
+
+  // 401 da refresh
+  if (res.status === 401) {
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      headers['Authorization'] = `Bearer ${localStorage.getItem('accessToken')}`;
+      const retryRes = await fetch(url, {
+        method,
+        headers,
+        body: formData,
+      });
+      if (!retryRes.ok) {
+        const err = await retryRes.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${retryRes.status}`);
+      }
+      return retryRes.json();
+    } else {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      window.location.href = '/login';
+      throw new Error('Session expired');
+    }
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
 export const api = {
+  // JSON metodlar
   get: <T = unknown>(endpoint: string, params?: RequestOptions['params']) =>
     request<T>(endpoint, { method: 'GET', params }),
 
@@ -87,15 +140,14 @@ export const api = {
   delete: <T = unknown>(endpoint: string) =>
     request<T>(endpoint, { method: 'DELETE' }),
 
-  upload: <T = unknown>(endpoint: string, formData: FormData) => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
-    return fetch(`${API_BASE}${endpoint}`, {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: formData,
-    }).then(res => {
-      if (!res.ok) return res.json().then(e => Promise.reject(new Error(e.error)));
-      return res.json() as Promise<T>;
-    });
-  },
+  // FormData metodlar (fayl yuklash uchun)
+  postFormData: <T = unknown>(endpoint: string, formData: FormData) =>
+    requestFormData<T>(endpoint, 'POST', formData),
+
+  putFormData: <T = unknown>(endpoint: string, formData: FormData) =>
+    requestFormData<T>(endpoint, 'PUT', formData),
+
+  // Eski upload (POST uchun qisqartma)
+  upload: <T = unknown>(endpoint: string, formData: FormData) =>
+    requestFormData<T>(endpoint, 'POST', formData),
 };

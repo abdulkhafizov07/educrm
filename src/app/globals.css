@@ -3,20 +3,26 @@
 /* Enable class-based dark mode (Tailwind v4 defaults to prefers-color-scheme) */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Brand palette: remap "indigo" accent to a neutral black/zinc scale.
-   This removes the purple (#513bf3) brand color everywhere in one place. */
+/* App font */
 @theme {
-  --color-indigo-50:  #fafafa;
-  --color-indigo-100: #f4f4f5;
-  --color-indigo-200: #e4e4e7;
-  --color-indigo-300: #d4d4d8;
-  --color-indigo-400: #a1a1aa;
-  --color-indigo-500: #3f3f46;
-  --color-indigo-600: #18181b;
-  --color-indigo-700: #000000;
-  --color-indigo-800: #18181b;
-  --color-indigo-900: #27272a;
-  --color-indigo-950: #09090b;
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Brand palette: remap the "blue" accent to the Digital Generation Uzbekistan
+   logo blue (#3a6cb4). Every `blue-*` utility in the app picks this up, so the
+   whole UI takes on the brand blue from this one place. */
+@theme {
+  --color-blue-50:  #f1f6fb;
+  --color-blue-100: #dde9f6;
+  --color-blue-200: #c1d6ed;
+  --color-blue-300: #97b8df;
+  --color-blue-400: #6593cb;
+  --color-blue-500: #4576bb;
+  --color-blue-600: #3a6cb4;
+  --color-blue-700: #305a96;
+  --color-blue-800: #2b4a79;
+  --color-blue-900: #273f64;
+  --color-blue-950: #1a2942;
 }
 
 * {

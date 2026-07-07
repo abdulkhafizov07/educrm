@@ -117,7 +117,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={t('common.search')}
-            className="w-full pl-10 pr-4 py-2 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full pl-10 pr-4 py-2 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
@@ -182,7 +182,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
                   className={cn(
                     'w-full px-4 py-2 text-left text-sm transition-colors',
                     l === locale
-                      ? 'text-indigo-600 font-medium'
+                      ? 'text-blue-600 font-medium'
                       : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
                   )}
                 >

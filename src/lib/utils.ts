@@ -23,6 +23,14 @@ export function getInitials(firstName: string, lastName: string): string {
   return `${firstName?.[0] || ''}${lastName?.[0] || ''}`.toUpperCase();
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
+/** Resolve an uploaded file path to a full URL (static files are served by the API on a different port). */
+export function mediaUrl(url?: string | null): string | null {
+  if (!url) return null;
+  return url.startsWith('http') ? url : `${API_BASE}${url}`;
+}
+
 export const DAY_NAMES_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export function getDayName(day: number, t: (key: string) => string): string {

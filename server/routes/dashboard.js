@@ -8,28 +8,67 @@ router.use(verifyToken);
 // GET /api/dashboard/stats
 router.get('/stats', async (req, res) => {
   try {
-    const branchFilter = req.user.role === 'branch_admin' ? `AND branch_id = '${req.user.branch_id}'` : '';
-    const branchJoinFilter = req.user.role === 'branch_admin' ? `AND g.branch_id = '${req.user.branch_id}'` : '';
+    const role = req.user.role;
+    const uid = req.user.id;          // from verified JWT
+    const bid = req.user.branch_id;
 
-    // Scope recent activity by role:
-    // super_admin -> all, branch_admin -> own branch users, teacher/student -> own actions only
+    const branchFilter = role === 'branch_admin' ? `AND branch_id = '${bid}'` : '';
+
+    // Group-level scope: branch_admin -> own branch, teacher -> own groups, student -> enrolled groups
+    let gScope = '';
+    if (role === 'branch_admin') gScope = `AND g.branch_id = '${bid}'`;
+    else if (role === 'teacher') gScope = `AND g.teacher_id = '${uid}'`;
+    else if (role === 'student') gScope = `AND EXISTS (SELECT 1 FROM group_students gss WHERE gss.group_id = g.id AND gss.student_id = '${uid}')`;
+
+    // Attendance scope: a student only ever sees their OWN records
+    const attScope = role === 'student' ? `AND ar.student_id = '${uid}'` : gScope;
+
+    const scopedPeople = role === 'teacher' || role === 'student';
+
+    // Scope recent activity by role
     let activityWhere = '';
     const activityParams = [];
-    if (req.user.role === 'branch_admin') {
+    if (role === 'branch_admin') {
       activityWhere = 'WHERE u.branch_id = $1';
-      activityParams.push(req.user.branch_id);
-    } else if (req.user.role === 'teacher' || req.user.role === 'student') {
+      activityParams.push(bid);
+    } else if (role === 'teacher' || role === 'student') {
       activityWhere = 'WHERE al.user_id = $1';
-      activityParams.push(req.user.id);
+      activityParams.push(uid);
     }
 
     const [students, teachers, branches, groups, recentActivity, attendanceToday] = await Promise.all([
-      query(`SELECT COUNT(*) FROM users WHERE role = 'student' AND is_active = true ${branchFilter}`),
-      query(`SELECT COUNT(*) FROM users WHERE role = 'teacher' AND is_active = true ${branchFilter}`),
-      req.user.role === 'super_admin'
+      scopedPeople
+        ? query(`SELECT COUNT(DISTINCT gs.student_id) AS count FROM group_students gs JOIN groups g ON gs.group_id = g.id WHERE g.is_active = true ${gScope}`)
+        : role === 'branch_admin'
+          // Branch students = directly assigned (users.branch_id) OR enrolled in one of the branch's active groups
+          ? query(
+              `SELECT COUNT(DISTINCT u.id) AS count FROM users u
+               WHERE u.role = 'student' AND u.is_active = true
+                 AND (u.branch_id = $1 OR EXISTS (
+                   SELECT 1 FROM group_students gs JOIN groups g ON gs.group_id = g.id
+                   WHERE gs.student_id = u.id AND g.branch_id = $1 AND g.is_active = true))`,
+              [bid]
+            )
+          : query(`SELECT COUNT(*) FROM users WHERE role = 'student' AND is_active = true ${branchFilter}`),
+      role === 'teacher'
+        ? query(`SELECT 1 as count`)
+        : role === 'student'
+          ? query(`SELECT COUNT(DISTINCT g.teacher_id) AS count FROM groups g WHERE g.teacher_id IS NOT NULL ${gScope}`)
+          : role === 'branch_admin'
+            // Branch teachers = directly assigned (users.branch_id) OR teaching one of the branch's active groups
+            ? query(
+                `SELECT COUNT(DISTINCT u.id) AS count FROM users u
+                 WHERE u.role = 'teacher' AND u.is_active = true
+                   AND (u.branch_id = $1 OR EXISTS (
+                     SELECT 1 FROM groups g
+                     WHERE g.teacher_id = u.id AND g.branch_id = $1 AND g.is_active = true))`,
+                [bid]
+              )
+            : query(`SELECT COUNT(*) FROM users WHERE role = 'teacher' AND is_active = true ${branchFilter}`),
+      role === 'super_admin'
         ? query(`SELECT COUNT(*) FROM branches WHERE is_active = true`)
         : query(`SELECT 1 as count`),
-      query(`SELECT COUNT(*) FROM groups g WHERE g.is_active = true ${branchJoinFilter}`),
+      query(`SELECT COUNT(*) FROM groups g WHERE g.is_active = true ${gScope}`),
       query(
         `SELECT al.action, al.entity_type, al.created_at,
            CONCAT(u.first_name, ' ', u.last_name) as user_name, u.role
@@ -47,7 +86,7 @@ router.get('/stats', async (req, res) => {
          FROM attendance_records ar
          JOIN attendance_sessions s ON ar.session_id = s.id
          JOIN groups g ON s.group_id = g.id
-         WHERE s.session_date = CURRENT_DATE ${branchJoinFilter}`
+         WHERE s.session_date = CURRENT_DATE ${attScope}`
       ),
     ]);
 
@@ -61,7 +100,7 @@ router.get('/stats', async (req, res) => {
        FROM attendance_sessions s
        JOIN attendance_records ar ON ar.session_id = s.id
        JOIN groups g ON s.group_id = g.id
-       WHERE s.session_date >= CURRENT_DATE - INTERVAL '7 days' ${branchJoinFilter}
+       WHERE s.session_date >= CURRENT_DATE - INTERVAL '7 days' ${attScope}
        GROUP BY s.session_date ORDER BY s.session_date`
     );
 
@@ -69,7 +108,7 @@ router.get('/stats', async (req, res) => {
       stats: {
         students: parseInt(students.rows[0].count),
         teachers: parseInt(teachers.rows[0].count),
-        branches: req.user.role === 'super_admin' ? parseInt(branches.rows[0].count) : null,
+        branches: role === 'super_admin' ? parseInt(branches.rows[0].count) : null,
         groups: parseInt(groups.rows[0].count),
       },
       attendanceToday: attendanceToday.rows[0],

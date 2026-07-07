@@ -30,8 +30,11 @@ router.post('/login', async (req, res) => {
     }
 
     const { rows } = await query(
-      `SELECT u.*, b.name as branch_name FROM users u
+      `SELECT u.*, b.name as branch_name, b.logo_url as branch_logo,
+              st.logo_url as app_logo, st.app_name
+       FROM users u
        LEFT JOIN branches b ON u.branch_id = b.id
+       LEFT JOIN app_settings st ON st.id = 1
        WHERE u.username = $1`,
       [username.toLowerCase().trim()]
     );
@@ -114,8 +117,11 @@ router.get('/me', verifyToken, async (req, res) => {
     const { rows } = await query(
       `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone,
               u.role, u.branch_id, u.avatar_url, u.is_active, u.last_login, u.created_at,
-              b.name as branch_name
-       FROM users u LEFT JOIN branches b ON u.branch_id = b.id
+              b.name as branch_name, b.logo_url as branch_logo,
+              st.logo_url as app_logo, st.app_name
+       FROM users u
+       LEFT JOIN branches b ON u.branch_id = b.id
+       LEFT JOIN app_settings st ON st.id = 1
        WHERE u.id = $1`,
       [req.user.id]
     );
