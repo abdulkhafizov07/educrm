@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useI18n } from '@/contexts/I18nContext';
@@ -54,7 +54,7 @@ const emptyForm: UserForm = { username: '', email: '', password: '', first_name:
 const currentYear = new Date().getFullYear();
 const ageFromBirthYear = (year: number | null) => (year ? currentYear - year : null);
 
-export default function StudentsPage() {
+function StudentsPageContent() {
   const { t } = useI18n();
   const { user: currentUser } = useAuth();
   const { toast } = useToast();
@@ -427,5 +427,15 @@ export default function StudentsPage() {
         onSaved={() => { setGraduateTarget(null); fetchUsers(); }}
       />
     </DashboardLayout>
+  );
+}
+
+// useSearchParams() must sit inside a Suspense boundary, otherwise `next build`
+// fails while prerendering (missing-suspense-with-csr-bailout).
+export default function StudentsPage() {
+  return (
+    <Suspense fallback={null}>
+      <StudentsPageContent />
+    </Suspense>
   );
 }

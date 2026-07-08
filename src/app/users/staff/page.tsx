@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useI18n } from '@/contexts/I18nContext';
@@ -45,7 +45,7 @@ interface UserForm {
 
 const emptyForm: UserForm = { username: '', email: '', password: '', first_name: '', last_name: '', phone: '', role: 'teacher', branch_id: '', is_active: true, created_at: '' };
 
-export default function StaffPage() {
+function StaffPageContent() {
   const { t } = useI18n();
   const { user: currentUser } = useAuth();
   const { toast } = useToast();
@@ -361,5 +361,15 @@ export default function StaffPage() {
         </div>
       </Modal>
     </DashboardLayout>
+  );
+}
+
+// useSearchParams() must sit inside a Suspense boundary, otherwise `next build`
+// fails while prerendering (missing-suspense-with-csr-bailout).
+export default function StaffPage() {
+  return (
+    <Suspense fallback={null}>
+      <StaffPageContent />
+    </Suspense>
   );
 }
