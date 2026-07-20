@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/Input';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { formatDate, formatDateTime, mediaUrl } from '@/lib/utils';
+import { AttendanceOverview } from '@/components/dashboard/AttendanceOverview';
 
 export default function ProfilePage() {
   const { t } = useI18n();
@@ -42,12 +43,26 @@ export default function ProfilePage() {
   const [savingApp, setSavingApp] = useState(false);
   const appLogoRef = useRef<HTMLInputElement>(null);
 
+  // Teacher's own dashboard-style statistics
+  const [teacherStats, setTeacherStats] = useState<{
+    stats: { groups: number; students: number; sessions: number; attendancePct: number };
+    attendanceToday?: { total: string; present_count: string; absent_count: string; late_count: string };
+    attendanceTrend?: Array<{ session_date: string; present_count: string; absent_count: string; late_count: string; total: string }>;
+  } | null>(null);
+
   useEffect(() => {
     if (user?.role !== 'super_admin') return;
     api.get<{ app_name: string | null; logo_url: string | null }>('/api/settings')
       .then(s => { setAppName(s.app_name || ''); setAppLogoUrl(s.logo_url); })
       .catch(() => {});
   }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'teacher' || !user.id) return;
+    api.get<NonNullable<typeof teacherStats>>(`/api/users/${user.id}/teacher-stats`)
+      .then(setTeacherStats).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.role, user?.id]);
 
   if (!user) return null;
 
@@ -139,6 +154,7 @@ export default function ProfilePage() {
         branch_admin: 'purple',
         teacher: 'info',
         student: 'success',
+        observer: 'warning',
       };
     return map[role] || 'info';
   };
@@ -230,6 +246,9 @@ export default function ProfilePage() {
                 {user.branch_name && (
                   <Badge variant="default">{user.branch_name}</Badge>
                 )}
+                {user.direction_name && (
+                  <Badge variant="info">{user.direction_name}</Badge>
+                )}
               </div>
               <div className="mt-4 text-xs text-gray-400 dark:text-gray-500 space-y-0.5">
                 <div>
@@ -245,6 +264,28 @@ export default function ProfilePage() {
             </div>
           </div>
         </div>
+
+        {/* Teacher statistics — dashboard-style stat cards */}
+        {user.role === 'teacher' && teacherStats && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              { label: t('dashboard.totalGroups'), value: teacherStats.stats.groups, cls: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' },
+              { label: t('dashboard.totalStudents'), value: teacherStats.stats.students, cls: 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400' },
+              { label: t('users.totalSessions'), value: teacherStats.stats.sessions, cls: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' },
+              { label: t('attendance.attendanceRate'), value: `${teacherStats.stats.attendancePct}%`, cls: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400' },
+            ].map((s, i) => (
+              <div key={i} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 text-center shadow-sm">
+                <div className={`text-xl font-bold ${s.cls.split(' ')[2]} ${s.cls.split(' ')[3]}`}>{s.value}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{s.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Teacher attendance charts — same as the dashboard, scoped to their groups */}
+        {user.role === 'teacher' && teacherStats && (
+          <AttendanceOverview attendanceToday={teacherStats.attendanceToday} attendanceTrend={teacherStats.attendanceTrend} />
+        )}
 
         {/* Personal info */}
         <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">

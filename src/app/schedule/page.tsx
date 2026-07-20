@@ -14,7 +14,7 @@ import { formatTime, getDayName, cn } from '@/lib/utils';
 import { ACCENT_COLORS, colorOf, type AccentColor } from '@/lib/colors';
 
 interface Schedule {
-  id: string; group_id: string; group_name: string; branch_name: string; teacher_name: string;
+  id: string; group_id: string; group_name: string; branch_id: string | null; branch_name: string | null; teacher_name: string;
   day_of_week: number; start_time: string; end_time: string; classroom: string | null;
 }
 interface Group { id: string; name: string; }
@@ -35,6 +35,11 @@ export default function SchedulePage() {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Filtrlar: matn qidiruvi (guruh/o'qituvchi/xona), filial va guruh bo'yicha
+  const [search, setSearch] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
 
   const canEdit = user?.role === 'super_admin' || user?.role === 'branch_admin';
 
@@ -106,16 +111,78 @@ export default function SchedulePage() {
     return map;
   }, [schedules]);
 
-  const legend = useMemo(() => {
+  // Filial filtri variantlari — jadval ma'lumotining o'zidan (bitta filialli rollarda select chiqmaydi)
+  const branchOptions = useMemo(() => {
     const seen = new Map<string, string>();
-    for (const s of schedules) if (!seen.has(s.group_id)) seen.set(s.group_id, s.group_name);
-    return [...seen.entries()].map(([id, name]) => ({ id, name, cc: colorOf(groupColors.get(id)) }));
-  }, [schedules, groupColors]);
+    for (const s of schedules) if (s.branch_id && s.branch_name && !seen.has(s.branch_id)) seen.set(s.branch_id, s.branch_name);
+    return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [schedules]);
+
+  // Qidiruv + filial filtri qo'llangan ro'yxat (guruh filtrisiz — legenda chiplariga asos)
+  const preGroupFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return schedules.filter(s => {
+      if (branchFilter && s.branch_id !== branchFilter) return false;
+      if (q && !`${s.group_name} ${s.teacher_name || ''} ${s.classroom || ''} ${s.branch_name || ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [schedules, branchFilter, search]);
+
+  // Yakuniy ko'rinadigan ro'yxat (guruh filtri ham qo'llangan)
+  const visible = useMemo(
+    () => (groupFilter ? preGroupFiltered.filter(s => s.group_id === groupFilter) : preGroupFiltered),
+    [preGroupFiltered, groupFilter]
+  );
+
+  // Legenda chiplari — bosilsa shu guruh bo'yicha filtr yoqiladi/o'chadi.
+  // Bir xil nomli guruhlar (turli filiallarda) filial nomi bilan ajratiladi.
+  const legend = useMemo(() => {
+    const seen = new Map<string, { name: string; branch: string | null }>();
+    for (const s of preGroupFiltered) if (!seen.has(s.group_id)) seen.set(s.group_id, { name: s.group_name, branch: s.branch_name });
+    const nameCounts = new Map<string, number>();
+    for (const { name } of seen.values()) nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
+    return [...seen.entries()].map(([id, { name, branch }]) => ({
+      id,
+      name,
+      label: (nameCounts.get(name) || 0) > 1 && branch ? `${name} · ${branch}` : name,
+      cc: colorOf(groupColors.get(id)),
+    })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [preGroupFiltered, groupColors]);
+
+  const hasFilters = !!(search || branchFilter || groupFilter);
+
+  // Bugun/kecha statistikasi — tanlangan filial (tanlanmasa butun ro'yxat) bo'yicha
+  // darslar soni va umumiy dars soati. Jadval haftalik bo'lgani uchun bugun/kecha
+  // shu hafta kunlariga to'g'ri keladigan darslardan hisoblanadi.
+  const todayDow = new Date().getDay();
+  const yesterdayDow = (todayDow + 6) % 7;
+  const dayTotals = useCallback((dow: number) => {
+    const base = branchFilter ? schedules.filter(s => s.branch_id === branchFilter) : schedules;
+    const items = base.filter(s => s.day_of_week === dow);
+    const minutes = items.reduce((sum, s) => {
+      const [sh, sm] = s.start_time.split(':').map(Number);
+      const [eh, em] = s.end_time.split(':').map(Number);
+      return sum + Math.max(0, eh * 60 + em - (sh * 60 + sm));
+    }, 0);
+    return { count: items.length, minutes };
+  }, [schedules, branchFilter]);
+  const todayStats = useMemo(() => dayTotals(todayDow), [dayTotals, todayDow]);
+  const yesterdayStats = useMemo(() => dayTotals(yesterdayDow), [dayTotals, yesterdayDow]);
+
+  const fmtDuration = (m: number) => {
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    if (h && min) return t('schedule.durationHM', { h, m: min });
+    if (h) return t('schedule.durationH', { h });
+    return t('schedule.durationM', { m: min });
+  };
+
+  const selectedBranchName = branchFilter ? branchOptions.find(b => b.id === branchFilter)?.name : null;
 
   // Group by day
   const byDay = DAYS.map(day => ({
     day,
-    items: schedules.filter(s => s.day_of_week === day).sort((a, b) => a.start_time.localeCompare(b.start_time)),
+    items: visible.filter(s => s.day_of_week === day).sort((a, b) => a.start_time.localeCompare(b.start_time)),
   })).filter(d => d.items.length > 0 || canEdit);
 
   return (
@@ -133,15 +200,91 @@ export default function SchedulePage() {
           )}
         </div>
 
-        {/* Group legend — colors below match each lesson card, so multi-group students don't mix them up */}
-        {legend.length > 1 && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
-            {legend.map(g => (
-              <div key={g.id} className="flex items-center gap-1.5">
-                <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', g.cc.solid)} />
-                <span className="text-xs font-medium text-gray-600 dark:text-gray-300">{g.name}</span>
+        {/* Filtrlar: qidiruv + filial + guruh */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder={t('common.search')}
+              className="pl-10 pr-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 w-52" />
+          </div>
+          {branchOptions.length > 1 && (
+            <select value={branchFilter}
+              onChange={e => { setBranchFilter(e.target.value); setGroupFilter(''); }}
+              className="px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">{t('common.branch')}: {t('common.all')}</option>
+              {branchOptions.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
+          {legend.length > 1 && (
+            <select value={groupFilter} onChange={e => setGroupFilter(e.target.value)}
+              className="px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[240px]">
+              <option value="">{t('users.group')}: {t('common.all')}</option>
+              {legend.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+            </select>
+          )}
+          {hasFilters && (
+            <button
+              onClick={() => { setSearch(''); setBranchFilter(''); setGroupFilter(''); }}
+              className="inline-flex items-center gap-1 px-3 py-2 text-sm text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              {t('common.close')}
+            </button>
+          )}
+          <span className="ml-auto text-xs text-gray-400">{visible.length} / {schedules.length}</span>
+        </div>
+
+        {/* Bugun/kecha: tanlangan filialdagi darslar soni va umumiy dars soati */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:max-w-xl">
+          {[
+            { label: t('schedule.statsToday'), day: todayDow, stats: todayStats },
+            { label: t('schedule.statsYesterday'), day: yesterdayDow, stats: yesterdayStats },
+          ].map(({ label, day, stats }) => (
+            <div key={label} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-gray-500 dark:text-gray-400">{label} · {getDayName(day, t)}</p>
+                {selectedBranchName && (
+                  <span className="text-xs text-blue-600 dark:text-blue-400 font-medium truncate">{selectedBranchName}</span>
+                )}
               </div>
-            ))}
+              <div className="mt-1 flex items-baseline gap-2 flex-wrap">
+                <span className="text-xl font-semibold text-gray-900 dark:text-white">
+                  {t('schedule.lessonsCount', { count: stats.count })}
+                </span>
+                {stats.minutes > 0 && (
+                  <span className="text-sm text-gray-500 dark:text-gray-400">· {fmtDuration(stats.minutes)}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Guruh legendasi — chip bosilsa shu guruh bo'yicha filtrlanadi (yana bosilsa bekor) */}
+        {legend.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
+            {legend.map(g => {
+              const active = groupFilter === g.id;
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => setGroupFilter(active ? '' : g.id)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-2 py-1 rounded-full border transition-colors cursor-pointer',
+                    active
+                      ? cn('border-transparent text-white', g.cc.solid)
+                      : cn('border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800', g.cc.bg)
+                  )}
+                >
+                  {!active && <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', g.cc.solid)} />}
+                  <span className={cn('text-xs font-medium', active ? 'text-white' : 'text-gray-600 dark:text-gray-300')}>{g.label}</span>
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -152,7 +295,7 @@ export default function SchedulePage() {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
             </svg>
           </div>
-        ) : schedules.length === 0 ? (
+        ) : visible.length === 0 ? (
           <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-12 text-center">
             <svg className="w-10 h-10 text-gray-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -179,6 +322,9 @@ export default function SchedulePage() {
                           </p>
                           {s.teacher_name && <p className="text-xs text-gray-400 truncate">{s.teacher_name}</p>}
                           {s.classroom && <p className="text-xs text-gray-400">{s.classroom}</p>}
+                          {branchOptions.length > 1 && s.branch_name && !branchFilter && (
+                            <p className="text-xs text-gray-400 truncate">{s.branch_name}</p>
+                          )}
                         </div>
                         {canEdit && (
                           <div className="flex gap-1 ml-2">

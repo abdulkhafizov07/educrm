@@ -9,10 +9,12 @@ export interface User {
   first_name: string;
   last_name: string;
   phone: string | null;
-  role: 'super_admin' | 'branch_admin' | 'teacher' | 'student';
+  role: 'super_admin' | 'branch_admin' | 'teacher' | 'student' | 'observer';
   branch_id: string | null;
   branch_name: string | null;
   branch_logo: string | null;
+  direction_id?: string | null;
+  direction_name?: string | null;
   app_logo?: string | null;
   app_name?: string | null;
   avatar_url: string | null;

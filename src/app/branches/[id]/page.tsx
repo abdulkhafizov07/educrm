@@ -47,7 +47,18 @@ interface BranchDetail {
     last_name: string;
     username: string;
     avatar_url: string | null;
+    direction_name: string | null;
     group_count: string;
+  }>;
+  students: Array<{
+    id: string;
+    first_name: string;
+    last_name: string;
+    username: string;
+    avatar_url: string | null;
+    phone: string | null;
+    direction_name: string | null;
+    group_names: string | null;
   }>;
   directions: Array<{
     id: string;
@@ -89,6 +100,8 @@ export default function BranchDetailPage({ params }: { params: Promise<{ id: str
   const [branch, setBranch] = useState<BranchDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [logoModalOpen, setLogoModalOpen] = useState(false);
+  // Clicking a stat card opens the matching list right below the stats
+  const [openList, setOpenList] = useState<'students' | 'teachers' | 'groups' | 'admins' | null>(null);
 
   useEffect(() => {
     api.get<BranchDetail>(`/api/branches/${id}`)
@@ -124,13 +137,87 @@ export default function BranchDetailPage({ params }: { params: Promise<{ id: str
   const admins = branch.admins ?? [];
   const groups = branch.groups ?? [];
   const directions = branch.directions ?? [];
+  const students = branch.students ?? [];
 
   const statCards = [
-    { label: t('branches.students'), value: branch.student_count, icon: <StudentsIcon />, color: 'blue' as const },
-    { label: t('branches.teachers'), value: branch.teacher_count, icon: <TeachersIcon />, color: 'green' as const },
-    { label: t('branches.groups'), value: branch.group_count, icon: <GroupsIcon />, color: 'yellow' as const },
-    { label: t('users.roles.branch_admin'), value: branch.admin_count, icon: <AdminIcon />, color: 'purple' as const },
+    { key: 'students' as const, label: t('branches.students'), value: branch.student_count, icon: <StudentsIcon />, color: 'blue' as const },
+    { key: 'teachers' as const, label: t('branches.teachers'), value: branch.teacher_count, icon: <TeachersIcon />, color: 'green' as const },
+    { key: 'groups' as const, label: t('branches.groups'), value: branch.group_count, icon: <GroupsIcon />, color: 'yellow' as const },
+    { key: 'admins' as const, label: t('users.roles.branch_admin'), value: branch.admin_count, icon: <AdminIcon />, color: 'purple' as const },
   ];
+
+  // Rows for the expandable list panel under the stat cards.
+  // Every person row shows filial (this page) + yo'nalish + guruh where relevant.
+  const listPanel = openList && (
+    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
+      <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+          {statCards.find(s => s.key === openList)?.label} ({{ students: students.length, teachers: teachers.length, groups: groups.length, admins: admins.length }[openList]})
+        </h2>
+        <button onClick={() => setOpenList(null)} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+          {t('common.close')}
+        </button>
+      </div>
+      <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-96 overflow-y-auto">
+        {openList === 'students' && (students.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-gray-400">{t('common.noData')}</div>
+        ) : students.map(s => (
+          <Link key={s.id} href={`/users/${s.id}`} className="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+            <Avatar firstName={s.first_name} lastName={s.last_name} avatarUrl={s.avatar_url} size="sm" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{s.first_name} {s.last_name}</p>
+              <p className="text-xs text-gray-400 truncate">
+                @{s.username} · {branch.name}
+                {s.direction_name ? ` · ${s.direction_name}` : ''}
+                {s.group_names ? ` · ${s.group_names}` : ''}
+              </p>
+            </div>
+            {s.phone && <span className="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400">{s.phone}</span>}
+          </Link>
+        )))}
+        {openList === 'teachers' && (teachers.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-gray-400">{t('common.noData')}</div>
+        ) : teachers.map(tc => (
+          <Link key={tc.id} href={`/users/${tc.id}`} className="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+            <Avatar firstName={tc.first_name} lastName={tc.last_name} avatarUrl={tc.avatar_url} size="sm" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{tc.first_name} {tc.last_name}</p>
+              <p className="text-xs text-gray-400 truncate">
+                @{tc.username} · {branch.name}
+                {tc.direction_name ? ` · ${tc.direction_name}` : ''}
+              </p>
+            </div>
+            <span className="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400">{tc.group_count} {t('branches.groups')}</span>
+          </Link>
+        )))}
+        {openList === 'groups' && (groups.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-gray-400">{t('common.noData')}</div>
+        ) : groups.map(g => (
+          <Link key={g.id} href={`/groups/${g.id}`} className="px-5 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{g.name}</p>
+              <p className="text-xs text-gray-400 truncate">{g.teacher_name || '—'}</p>
+            </div>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <span className="text-sm text-gray-500 dark:text-gray-400">{g.student_count}/{g.max_students}</span>
+              <Badge variant={g.is_active ? 'success' : 'default'}>{g.is_active ? t('common.active') : t('common.inactive')}</Badge>
+            </div>
+          </Link>
+        )))}
+        {openList === 'admins' && (admins.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-gray-400">{t('common.noData')}</div>
+        ) : admins.map(a => (
+          <Link key={a.id} href={`/users/${a.id}`} className="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+            <Avatar firstName={a.first_name} lastName={a.last_name} avatarUrl={a.avatar_url} size="sm" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{a.first_name} {a.last_name}</p>
+              <p className="text-xs text-gray-400 truncate">@{a.username} · {branch.name}</p>
+            </div>
+          </Link>
+        )))}
+      </div>
+    </div>
+  );
 
   return (
     <DashboardLayout>
@@ -190,12 +277,22 @@ export default function BranchDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
 
-        {/* Stats — same card style as the dashboard's top stat row */}
+        {/* Stats — same card style as the dashboard's top stat row; click to open the list */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {statCards.map((s, i) => (
-            <StatCard key={i} title={s.label} value={s.value} icon={s.icon} color={s.color} />
+            <button
+              key={i}
+              type="button"
+              onClick={() => setOpenList(openList === s.key ? null : s.key)}
+              className={cn('text-left w-full cursor-pointer rounded-lg transition', openList === s.key && 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-950')}
+            >
+              <StatCard title={s.label} value={s.value} icon={s.icon} color={s.color} />
+            </button>
           ))}
         </div>
+
+        {/* Expanded list for the clicked stat */}
+        {listPanel}
 
         {/* Attendance — same charts as the dashboard, scoped to this branch's groups only */}
         <AttendanceOverview attendanceToday={branch.attendanceToday} attendanceTrend={branch.attendanceTrend} />
@@ -321,7 +418,7 @@ export default function BranchDetailPage({ params }: { params: Promise<{ id: str
                       <Avatar firstName={tc.first_name} lastName={tc.last_name} avatarUrl={tc.avatar_url} size="sm" />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{tc.first_name} {tc.last_name}</p>
-                        <p className="text-xs text-gray-400 truncate">@{tc.username}</p>
+                        <p className="text-xs text-gray-400 truncate">@{tc.username}{tc.direction_name ? ` · ${tc.direction_name}` : ''}</p>
                       </div>
                       <span className="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400">
                         {tc.group_count} {t('branches.groups')}

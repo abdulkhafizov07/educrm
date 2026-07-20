@@ -18,7 +18,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { formatDate } from '@/lib/utils';
 import Link from 'next/link';
 
-const STAFF_ROLES = 'super_admin,branch_admin,teacher';
+const STAFF_ROLES = 'super_admin,branch_admin,teacher,observer';
 
 interface User {
   id: string;
@@ -30,6 +30,8 @@ interface User {
   role: string;
   branch_id: string | null;
   branch_name: string | null;
+  direction_id: string | null;
+  direction_name: string | null;
   avatar_url: string | null;
   is_active: boolean;
   last_login: string | null;
@@ -37,13 +39,14 @@ interface User {
 }
 
 interface Branch { id: string; name: string; }
+interface Direction { id: string; name: string; branch_id: string | null; }
 
 interface UserForm {
   username: string; email: string; password: string; first_name: string; last_name: string;
-  phone: string; role: string; branch_id: string; is_active: boolean; created_at: string;
+  phone: string; role: string; branch_id: string; direction_id: string; is_active: boolean; created_at: string;
 }
 
-const emptyForm: UserForm = { username: '', email: '', password: '', first_name: '', last_name: '', phone: '', role: 'teacher', branch_id: '', is_active: true, created_at: '' };
+const emptyForm: UserForm = { username: '', email: '', password: '', first_name: '', last_name: '', phone: '', role: 'teacher', branch_id: '', direction_id: '', is_active: true, created_at: '' };
 
 function StaffPageContent() {
   const { t } = useI18n();
@@ -61,6 +64,7 @@ function StaffPageContent() {
   const [roleFilter, setRoleFilter] = useState('');
   const [activeFilter, setActiveFilter] = useState('');
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [directions, setDirections] = useState<Direction[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
@@ -85,16 +89,22 @@ function StaffPageContent() {
     finally { setLoading(false); }
   }, [search, roleFilter, activeFilter, page, limit, toast]);
 
+  // Observers get a read-only staff list
+  const isAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'branch_admin';
+
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
   useEffect(() => {
     if (currentUser?.role === 'super_admin') {
       api.get<{ data: Branch[] }>('/api/branches').then(d => setBranches(d.data)).catch(() => {});
     }
-  }, [currentUser]);
+    if (isAdmin) {
+      api.get<{ data: Direction[] }>('/api/directions').then(d => setDirections(d.data)).catch(() => {});
+    }
+  }, [currentUser, isAdmin]);
 
   const openEdit = useCallback((u: User) => {
     setEditingUser(u);
-    setForm({ username: u.username, email: u.email || '', password: '', first_name: u.first_name, last_name: u.last_name, phone: u.phone || '', role: u.role, branch_id: u.branch_id || '', is_active: u.is_active, created_at: u.created_at ? u.created_at.slice(0, 10) : '' });
+    setForm({ username: u.username, email: u.email || '', password: '', first_name: u.first_name, last_name: u.last_name, phone: u.phone || '', role: u.role, branch_id: u.branch_id || '', direction_id: u.direction_id || '', is_active: u.is_active, created_at: u.created_at ? u.created_at.slice(0, 10) : '' });
     setModalOpen(true);
   }, []);
 
@@ -113,7 +123,12 @@ function StaffPageContent() {
     if (!editingUser && !form.password) return toast('Password is required', 'error');
     setSaving(true);
     try {
-      const payload: Record<string, unknown> = { ...form, branch_id: form.branch_id || null };
+      const payload: Record<string, unknown> = {
+        ...form,
+        branch_id: form.branch_id || null,
+        // Direction only applies to teachers
+        direction_id: form.role === 'teacher' ? (form.direction_id || null) : null,
+      };
       if (!payload.password) delete payload.password;
       if (!payload.created_at) delete payload.created_at;
       if (editingUser) {
@@ -164,7 +179,7 @@ function StaffPageContent() {
 
   const roleVariant = (role: string): 'info' | 'danger' | 'success' | 'warning' | 'purple' => {
     const map: Record<string, 'info' | 'danger' | 'success' | 'warning' | 'purple'> = {
-      super_admin: 'danger', branch_admin: 'purple', teacher: 'info', student: 'success'
+      super_admin: 'danger', branch_admin: 'purple', teacher: 'info', student: 'success', observer: 'warning'
     };
     return map[role] || 'info';
   };
@@ -187,8 +202,11 @@ function StaffPageContent() {
         {t(`users.roles.${u.role}`)}
       </Badge>
     )},
-    { key: 'branch_name', header: t('common.branch'), render: (u: User) => <span>{u.branch_name || '—'}</span> },
-    { key: 'email', header: t('common.email'), className: 'hidden xl:table-cell', render: (u: User) => <span className="text-gray-500 break-all">{u.email || '—'}</span> },
+    { key: 'branch_name', header: t('common.branch'), render: (u: User) => <span className="whitespace-nowrap">{u.branch_name || '—'}</span> },
+    { key: 'direction_name', header: t('users.direction'), className: 'hidden lg:table-cell', render: (u: User) => <span className="text-gray-500 whitespace-nowrap">{u.direction_name || '—'}</span> },
+    { key: 'email', header: t('common.email'), className: 'hidden xl:table-cell', render: (u: User) => (
+      <span className="block text-gray-500 whitespace-nowrap max-w-[180px] truncate" title={u.email || undefined}>{u.email || '—'}</span>
+    )},
     { key: 'is_active', header: t('common.status'), render: (u: User) => (
       <Badge variant={u.is_active ? 'success' : 'default'}>
         {u.is_active ? t('common.active') : t('common.inactive')}
@@ -205,22 +223,26 @@ function StaffPageContent() {
             </svg>
           </Button>
         </Link>
-        <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-          </svg>
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => { setResetTarget(u); setNewPassword(''); }}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-          </svg>
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => handleToggleActive(u)}
-          className={u.is_active ? 'text-amber-500 hover:bg-amber-50' : 'text-green-500 hover:bg-green-50'}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={u.is_active ? "M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"} />
-          </svg>
-        </Button>
+        {isAdmin && (
+          <>
+            <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => { setResetTarget(u); setNewPassword(''); }}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => handleToggleActive(u)}
+              className={u.is_active ? 'text-amber-500 hover:bg-amber-50' : 'text-green-500 hover:bg-green-50'}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={u.is_active ? "M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"} />
+              </svg>
+            </Button>
+          </>
+        )}
         {currentUser?.role === 'super_admin' && (
           <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(u)} className="text-red-500 hover:bg-red-50">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -237,6 +259,7 @@ function StaffPageContent() {
     { value: 'super_admin', label: t('users.roles.super_admin') },
     { value: 'branch_admin', label: t('users.roles.branch_admin') },
     { value: 'teacher', label: t('users.roles.teacher') },
+    { value: 'observer', label: t('users.roles.observer') },
   ];
 
   return (
@@ -247,12 +270,14 @@ function StaffPageContent() {
             <h1 className="text-xl font-semibold text-gray-900 dark:text-white">{t('users.staffTitle')}</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{total} {t('common.total').toLowerCase()}</p>
           </div>
-          <Button onClick={openCreate}>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            {t('users.addUser')}
-          </Button>
+          {isAdmin && (
+            <Button onClick={openCreate}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              {t('users.addUser')}
+            </Button>
+          )}
         </div>
 
         {/* Filters */}
@@ -305,15 +330,30 @@ function StaffPageContent() {
             onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
             required
             options={[
-              ...(currentUser?.role === 'super_admin' ? [{ value: 'super_admin', label: t('users.roles.super_admin') }, { value: 'branch_admin', label: t('users.roles.branch_admin') }] : []),
+              ...(currentUser?.role === 'super_admin' ? [
+                { value: 'super_admin', label: t('users.roles.super_admin') },
+                { value: 'branch_admin', label: t('users.roles.branch_admin') },
+                { value: 'observer', label: t('users.roles.observer') },
+              ] : []),
               { value: 'teacher', label: t('users.roles.teacher') },
             ]}
           />
+          {form.role === 'teacher' && (
+            <Select
+              label={t('users.direction')}
+              value={form.direction_id}
+              onChange={e => setForm(f => ({ ...f, direction_id: e.target.value }))}
+              placeholder={`— ${t('common.optional')} —`}
+              options={directions
+                .filter(d => !form.branch_id || d.branch_id === form.branch_id)
+                .map(d => ({ value: d.id, label: d.name }))}
+            />
+          )}
           {currentUser?.role === 'super_admin' && branches.length > 0 && (
             <Select
               label={t('common.branch')}
               value={form.branch_id}
-              onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}
+              onChange={e => setForm(f => ({ ...f, branch_id: e.target.value, direction_id: '' }))}
               placeholder={`— ${t('common.optional')} —`}
               options={branches.map(b => ({ value: b.id, label: b.name }))}
             />

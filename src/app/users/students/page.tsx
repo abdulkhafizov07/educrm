@@ -26,6 +26,7 @@ interface User {
   email: string | null;
   first_name: string;
   last_name: string;
+  middle_name: string | null;
   phone: string | null;
   role: string;
   branch_id: string | null;
@@ -39,20 +40,44 @@ interface User {
   birth_year: number | null;
   father_name: string | null;
   mother_name: string | null;
+  birth_date: string | null;
+  document_number: string | null;
+  pinfl: string | null;
+  school_number: string | null;
+  school_grade: string | null;
+  direction_id: string | null;
+  direction_name: string | null;
+  group_names: string | null;
+  plain_password?: string | null;
 }
 
+interface ImportRowIssue { row: number; message: string; }
+interface ImportResult { created: number; total: number; errors: ImportRowIssue[]; warnings: ImportRowIssue[]; }
+
 interface Branch { id: string; name: string; }
+interface Direction { id: string; name: string; branch_id: string | null; }
+interface Group { id: string; name: string; branch_id: string; direction_id: string | null; }
 
 interface UserForm {
   username: string; email: string; password: string; first_name: string; last_name: string;
-  phone: string; branch_id: string; is_active: boolean; created_at: string;
+  middle_name: string; phone: string; branch_id: string; is_active: boolean; created_at: string;
   address: string; mother_phone: string; birth_year: string;
   father_name: string; mother_name: string;
+  birth_date: string; document_number: string; pinfl: string;
+  school_number: string; school_grade: string; direction_id: string; group_id: string;
 }
 
-const emptyForm: UserForm = { username: '', email: '', password: '', first_name: '', last_name: '', phone: '', branch_id: '', is_active: true, created_at: '', address: '', mother_phone: '', birth_year: '', father_name: '', mother_name: '' };
+const emptyForm: UserForm = {
+  username: '', email: '', password: '', first_name: '', last_name: '', middle_name: '', phone: '', branch_id: '',
+  is_active: true, created_at: '', address: '', mother_phone: '', birth_year: '',
+  father_name: '', mother_name: '',
+  birth_date: '', document_number: '', pinfl: '', school_number: '', school_grade: '',
+  direction_id: '', group_id: '',
+};
 const currentYear = new Date().getFullYear();
 const ageFromBirthYear = (year: number | null) => (year ? currentYear - year : null);
+const ageOf = (u: User) =>
+  u.birth_date ? currentYear - new Date(u.birth_date).getFullYear() : ageFromBirthYear(u.birth_year);
 
 function StudentsPageContent() {
   const { t } = useI18n();
@@ -72,6 +97,8 @@ function StudentsPageContent() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [directions, setDirections] = useState<Direction[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
@@ -82,7 +109,12 @@ function StudentsPageContent() {
   const [newPassword, setNewPassword] = useState('');
   const [resetting, setResetting] = useState(false);
   const [graduateTarget, setGraduateTarget] = useState<User | null>(null);
+  const [createdCreds, setCreatedCreds] = useState<{ username: string; password: string } | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   const filterParams = {
     search: search || undefined,
@@ -107,20 +139,33 @@ function StudentsPageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, branchFilter, activeFilter, dateFrom, dateTo, page, limit, toast]);
 
+  // Role shortcuts: admins manage, teachers may view + add, observers only view
+  const isAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'branch_admin';
+  const canAdd = isAdmin || currentUser?.role === 'teacher';
+
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
   useEffect(() => {
-    if (currentUser?.role === 'super_admin') {
+    if (currentUser?.role === 'super_admin' || currentUser?.role === 'observer') {
       api.get<{ data: Branch[] }>('/api/branches').then(d => setBranches(d.data)).catch(() => {});
     }
   }, [currentUser]);
+  // Direction + group choices for the student form (admins and teachers)
+  useEffect(() => {
+    if (!canAdd) return;
+    api.get<{ data: Direction[] }>('/api/directions').then(d => setDirections(d.data)).catch(() => {});
+    api.get<{ data: Group[] }>('/api/groups', { limit: 200, is_active: 'true' }).then(d => setGroups(d.data)).catch(() => {});
+  }, [canAdd]);
 
   const openEdit = useCallback((u: User) => {
     setEditingUser(u);
     setForm({
       username: u.username, email: u.email || '', password: '', first_name: u.first_name, last_name: u.last_name,
-      phone: u.phone || '', branch_id: u.branch_id || '', is_active: u.is_active, created_at: u.created_at ? u.created_at.slice(0, 10) : '',
+      middle_name: u.middle_name || '', phone: u.phone || '', branch_id: u.branch_id || '', is_active: u.is_active, created_at: u.created_at ? u.created_at.slice(0, 10) : '',
       address: u.address || '', mother_phone: u.mother_phone || '', birth_year: u.birth_year ? String(u.birth_year) : '',
       father_name: u.father_name || '', mother_name: u.mother_name || '',
+      birth_date: u.birth_date ? u.birth_date.slice(0, 10) : '', document_number: u.document_number || '',
+      pinfl: u.pinfl || '', school_number: u.school_number || '', school_grade: u.school_grade || '',
+      direction_id: u.direction_id || '', group_id: '',
     });
     setModalOpen(true);
   }, []);
@@ -136,19 +181,27 @@ function StudentsPageContent() {
   const openCreate = () => { setEditingUser(null); setForm({ ...emptyForm, branch_id: currentUser?.branch_id || '' }); setModalOpen(true); };
 
   const handleSave = async () => {
-    if (!form.username || !form.first_name || !form.last_name) return toast(t('errors.required'), 'error');
-    if (!editingUser && !form.password) return toast('Password is required', 'error');
+    // Login/parol bo'sh qolsa server avtomatik yaratadi (faqat yangi talaba uchun)
+    if (!form.first_name || !form.last_name || (editingUser && !form.username)) return toast(t('errors.required'), 'error');
+    // O'qituvchi faqat o'z guruhiga qo'shadi — guruhsiz o'quvchi unga ko'rinmay qoladi
+    if (currentUser?.role === 'teacher' && !editingUser && !form.group_id) return toast(t('errors.required'), 'error');
     setSaving(true);
     try {
       const payload: Record<string, unknown> = { ...form, role: 'student', branch_id: form.branch_id || null };
+      // Yo'nalish tanlanmagan bo'lsa, tanlangan guruhning yo'nalishi olinadi
+      const selGroup = groups.find(g => g.id === form.group_id);
+      payload.direction_id = form.direction_id || selGroup?.direction_id || null;
+      if (!payload.username) delete payload.username;
       if (!payload.password) delete payload.password;
       if (!payload.created_at) delete payload.created_at;
       if (editingUser) {
         await api.put(`/api/users/${editingUser.id}`, payload);
         toast(t('users.userUpdated'), 'success');
       } else {
-        await api.post('/api/users', payload);
+        const res = await api.post<{ id: string; username: string; password?: string }>('/api/users', payload);
         toast(t('users.userCreated'), 'success');
+        // Yaratilgan login-parolni bir marta ko'rsatamiz (ayniqsa avtomatik yaratilganda)
+        if (res.password) setCreatedCreds({ username: res.username, password: res.password });
       }
       setModalOpen(false);
       fetchUsers();
@@ -200,6 +253,28 @@ function StudentsPageContent() {
     finally { setExporting(false); }
   };
 
+  const handleDownloadTemplate = async () => {
+    try {
+      await downloadFile('/api/users/students/import/template', 'students-import-template.xlsx');
+    } catch (err) { toast((err as Error).message, 'error'); }
+  };
+
+  const handleImport = async () => {
+    if (!importFile) return;
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', importFile);
+      const res = await api.postFormData<ImportResult>('/api/users/students/import', fd);
+      setImportResult(res);
+      if (res.created > 0) {
+        toast(t('users.importDone', { created: res.created, total: res.total }), 'success');
+        fetchUsers();
+      }
+    } catch (err) { toast((err as Error).message, 'error'); }
+    finally { setImporting(false); }
+  };
+
   const columns = [
     {
       key: 'user', header: t('common.name'),
@@ -213,9 +288,21 @@ function StudentsPageContent() {
         </div>
       )
     },
-    { key: 'branch_name', header: t('common.branch'), render: (u: User) => <span>{u.branch_name || '—'}</span> },
-    { key: 'age', header: t('users.age'), className: 'hidden md:table-cell', render: (u: User) => <span className="text-gray-500">{ageFromBirthYear(u.birth_year) ?? '—'}</span> },
-    { key: 'email', header: t('common.email'), className: 'hidden xl:table-cell', render: (u: User) => <span className="text-gray-500 break-all">{u.email || '—'}</span> },
+    { key: 'branch_name', header: t('common.branch'), render: (u: User) => <span className="whitespace-nowrap">{u.branch_name || '—'}</span> },
+    { key: 'direction_name', header: t('users.direction'), className: 'hidden lg:table-cell', render: (u: User) => <span className="text-gray-500 whitespace-nowrap">{u.direction_name || '—'}</span> },
+    { key: 'group_names', header: t('users.group'), className: 'hidden md:table-cell', render: (u: User) => (
+      <span className="block text-gray-500 whitespace-nowrap max-w-[180px] truncate" title={u.group_names || undefined}>{u.group_names || '—'}</span>
+    )},
+    { key: 'age', header: t('users.age'), className: 'hidden md:table-cell', render: (u: User) => <span className="text-gray-500">{ageOf(u) ?? '—'}</span> },
+    { key: 'email', header: t('common.email'), className: 'hidden xl:table-cell', render: (u: User) => (
+      <span className="block text-gray-500 whitespace-nowrap max-w-[180px] truncate" title={u.email || undefined}>{u.email || '—'}</span>
+    )},
+    // Faqat adminlarga: talabaning joriy paroli (backend boshqa rollarga qaytarmaydi)
+    ...(isAdmin ? [{
+      key: 'password', header: t('common.password'), render: (u: User) => (
+        <span className="text-gray-500 font-mono text-xs whitespace-nowrap">{u.plain_password || '—'}</span>
+      )
+    }] : []),
     { key: 'is_active', header: t('common.status'), render: (u: User) => (
       <Badge variant={u.is_active ? 'success' : 'default'}>
         {u.is_active ? t('common.active') : t('common.inactive')}
@@ -233,29 +320,33 @@ function StudentsPageContent() {
             </svg>
           </Button>
         </Link>
-        <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-          </svg>
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => { setResetTarget(u); setNewPassword(''); }}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-          </svg>
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => handleToggleActive(u)}
-          className={u.is_active ? 'text-amber-500 hover:bg-amber-50' : 'text-green-500 hover:bg-green-50'}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={u.is_active ? "M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"} />
-          </svg>
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => setGraduateTarget(u)} title={t('users.graduate')}
-          className="text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14v6m-7-8.5V16c0 1.5 3 3 7 3s7-1.5 7-3v-4.5" />
-          </svg>
-        </Button>
+        {isAdmin && (
+          <>
+            <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => { setResetTarget(u); setNewPassword(''); }}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => handleToggleActive(u)}
+              className={u.is_active ? 'text-amber-500 hover:bg-amber-50' : 'text-green-500 hover:bg-green-50'}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={u.is_active ? "M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"} />
+              </svg>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setGraduateTarget(u)} title={t('users.graduate')}
+              className="text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14v6m-7-8.5V16c0 1.5 3 3 7 3s7-1.5 7-3v-4.5" />
+              </svg>
+            </Button>
+          </>
+        )}
         {currentUser?.role === 'super_admin' && (
           <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(u)} className="text-red-500 hover:bg-red-50">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -276,18 +367,30 @@ function StudentsPageContent() {
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{total} {t('common.total').toLowerCase()}</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleExport} loading={exporting}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              {t('users.exportExcel')}
-            </Button>
-            <Button onClick={openCreate}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              {t('users.addUser')}
-            </Button>
+            {isAdmin && (
+              <Button variant="outline" onClick={() => { setImportFile(null); setImportResult(null); setImportOpen(true); }}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 16v-6m0 0l-3 3m3-3l3 3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                {t('users.importExcel')}
+              </Button>
+            )}
+            {isAdmin && (
+              <Button variant="outline" onClick={handleExport} loading={exporting}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                {t('users.exportExcel')}
+              </Button>
+            )}
+            {canAdd && (
+              <Button onClick={openCreate}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                {t('users.addUser')}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -301,7 +404,7 @@ function StudentsPageContent() {
               placeholder={t('common.search')}
               className="pl-10 pr-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 w-52" />
           </div>
-          {currentUser?.role === 'super_admin' && branches.length > 0 && (
+          {(currentUser?.role === 'super_admin' || currentUser?.role === 'observer') && branches.length > 0 && (
             <select value={branchFilter} onChange={e => { setBranchFilter(e.target.value); setPage(1); }}
               className="px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">{t('common.branch')}: {t('common.all')}</option>
@@ -343,40 +446,64 @@ function StudentsPageContent() {
         <div className="grid grid-cols-2 gap-4">
           <Input label={t('common.firstName')} value={form.first_name} onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))} required />
           <Input label={t('common.lastName')} value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))} required />
-          <Input label={t('common.username')} value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} required />
+          <Input label={t('users.middleName')} value={form.middle_name} onChange={e => setForm(f => ({ ...f, middle_name: e.target.value }))} />
+          <Input label={t('common.username')} value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+            required={!!editingUser} hint={!editingUser ? t('users.autoGenHint') : undefined} />
           <Input label={t('common.email')} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
           {!editingUser && (
-            <Input label={t('common.password')} type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} required />
+            <Input label={t('common.password')} type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+              hint={t('users.autoGenHint')} />
           )}
           <Input label={t('common.phone')} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+          <Input
+            label={t('users.birthDate')}
+            type="date"
+            value={form.birth_date}
+            onChange={e => setForm(f => ({ ...f, birth_date: e.target.value }))}
+            hint={form.birth_date ? `${t('users.age')}: ${currentYear - new Date(form.birth_date).getFullYear()}` : undefined}
+          />
+          <Input label={t('users.documentNumber')} value={form.document_number} onChange={e => setForm(f => ({ ...f, document_number: e.target.value }))} placeholder="AA 1234567" />
+          <Input label={t('users.pinfl')} value={form.pinfl} onChange={e => setForm(f => ({ ...f, pinfl: e.target.value }))} maxLength={14} />
+          <Input label={t('users.schoolNumber')} value={form.school_number} onChange={e => setForm(f => ({ ...f, school_number: e.target.value }))} />
+          <Input label={t('users.schoolGrade')} value={form.school_grade} onChange={e => setForm(f => ({ ...f, school_grade: e.target.value }))} />
           <Input label={t('users.fatherName')} value={form.father_name} onChange={e => setForm(f => ({ ...f, father_name: e.target.value }))} />
           <Input label={t('users.motherName')} value={form.mother_name} onChange={e => setForm(f => ({ ...f, mother_name: e.target.value }))} />
           <Input label={t('users.motherPhone')} value={form.mother_phone} onChange={e => setForm(f => ({ ...f, mother_phone: e.target.value }))} />
-          <Input
-            label={t('users.birthYear')}
-            type="number"
-            min={1950}
-            max={currentYear}
-            value={form.birth_year}
-            onChange={e => setForm(f => ({ ...f, birth_year: e.target.value }))}
-            hint={form.birth_year ? `${t('users.age')}: ${ageFromBirthYear(Number(form.birth_year))}` : undefined}
-          />
           <div className="col-span-2">
             <Input label={t('users.address')} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} />
-          </div>
-          <div>
-            <Input label={t('common.createdAt')} type="date" value={form.created_at} onChange={e => setForm(f => ({ ...f, created_at: e.target.value }))} />
-            <p className="text-xs text-gray-400 mt-1">{t('users.joinDateHint')}</p>
           </div>
           {currentUser?.role === 'super_admin' && branches.length > 0 && (
             <Select
               label={t('common.branch')}
               value={form.branch_id}
-              onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}
+              onChange={e => setForm(f => ({ ...f, branch_id: e.target.value, direction_id: '', group_id: '' }))}
               placeholder={`— ${t('common.optional')} —`}
               options={branches.map(b => ({ value: b.id, label: b.name }))}
             />
           )}
+          <Select
+            label={t('users.direction')}
+            value={form.direction_id}
+            onChange={e => setForm(f => ({ ...f, direction_id: e.target.value, group_id: '' }))}
+            placeholder={`— ${t('common.optional')} —`}
+            options={directions
+              .filter(d => !form.branch_id || d.branch_id === form.branch_id)
+              .map(d => ({ value: d.id, label: d.name }))}
+          />
+          <Select
+            label={t('users.group')}
+            value={form.group_id}
+            onChange={e => setForm(f => ({ ...f, group_id: e.target.value }))}
+            required={currentUser?.role === 'teacher'}
+            placeholder={currentUser?.role === 'teacher' ? '—' : `— ${t('common.optional')} —`}
+            options={groups
+              .filter(g => (!form.branch_id || g.branch_id === form.branch_id) && (!form.direction_id || g.direction_id === form.direction_id))
+              .map(g => ({ value: g.id, label: g.name }))}
+          />
+          <div>
+            <Input label={t('common.createdAt')} type="date" value={form.created_at} onChange={e => setForm(f => ({ ...f, created_at: e.target.value }))} />
+            <p className="text-xs text-gray-400 mt-1">{t('users.joinDateHint')}</p>
+          </div>
           {editingUser && (
             <label className="flex items-center gap-2 cursor-pointer col-span-2">
               <input type="checkbox" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
@@ -387,6 +514,60 @@ function StudentsPageContent() {
         <div className="flex gap-3 justify-end mt-5">
           <Button variant="outline" onClick={() => setModalOpen(false)} disabled={saving}>{t('common.cancel')}</Button>
           <Button onClick={handleSave} loading={saving}>{editingUser ? t('common.save') : t('common.create')}</Button>
+        </div>
+      </Modal>
+
+      {/* Excel Import */}
+      <Modal open={importOpen} onClose={() => setImportOpen(false)} title={t('users.importTitle')} size="lg">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500 dark:text-gray-400">{t('users.importHint')}</p>
+          <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            {t('users.downloadTemplate')}
+          </Button>
+          <input
+            type="file"
+            accept=".xlsx"
+            onChange={e => { setImportFile(e.target.files?.[0] || null); setImportResult(null); }}
+            className="block w-full text-sm text-gray-700 dark:text-gray-300 file:mr-3 file:px-4 file:py-2 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-600 dark:file:bg-blue-900/30 dark:file:text-blue-300 hover:file:bg-blue-100 file:cursor-pointer cursor-pointer"
+          />
+          {importResult && (
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-green-600 dark:text-green-400">
+                {t('users.importDone', { created: importResult.created, total: importResult.total })}
+              </p>
+              {importResult.errors.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-1">
+                    {t('users.importErrors')} ({importResult.errors.length})
+                  </p>
+                  <ul className="text-xs text-red-500 space-y-0.5 max-h-40 overflow-y-auto">
+                    {importResult.errors.map((e, i) => (
+                      <li key={i}>{t('users.importRow')} {e.row}: {e.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {importResult.warnings.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-amber-600 dark:text-amber-400 mb-1">
+                    {t('users.importWarnings')} ({importResult.warnings.length})
+                  </p>
+                  <ul className="text-xs text-amber-500 space-y-0.5 max-h-40 overflow-y-auto">
+                    {importResult.warnings.map((w, i) => (
+                      <li key={i}>{t('users.importRow')} {w.row}: {w.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex gap-3 justify-end mt-5">
+          <Button variant="outline" onClick={() => setImportOpen(false)} disabled={importing}>{t('common.close')}</Button>
+          <Button onClick={handleImport} loading={importing} disabled={!importFile}>{t('users.importRun')}</Button>
         </div>
       </Modal>
 
@@ -417,6 +598,24 @@ function StudentsPageContent() {
         <div className="flex gap-3 justify-end mt-4">
           <Button variant="outline" onClick={() => setResetTarget(null)} disabled={resetting}>{t('common.cancel')}</Button>
           <Button onClick={handleResetPassword} loading={resetting}>{t('common.save')}</Button>
+        </div>
+      </Modal>
+
+      {/* Yangi talabaning login-paroli (yaratilgandan keyin bir marta ko'rsatiladi) */}
+      <Modal open={!!createdCreds} onClose={() => setCreatedCreds(null)} title={t('users.credentialsTitle')} size="sm">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{t('users.credentialsHint')}</p>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 rounded px-3 py-2">
+            <span className="text-sm text-gray-500">{t('common.username')}</span>
+            <span className="text-sm font-mono font-medium text-gray-900 dark:text-white">{createdCreds?.username}</span>
+          </div>
+          <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 rounded px-3 py-2">
+            <span className="text-sm text-gray-500">{t('common.password')}</span>
+            <span className="text-sm font-mono font-medium text-gray-900 dark:text-white">{createdCreds?.password}</span>
+          </div>
+        </div>
+        <div className="flex justify-end mt-4">
+          <Button onClick={() => setCreatedCreds(null)}>{t('common.close')}</Button>
         </div>
       </Modal>
 

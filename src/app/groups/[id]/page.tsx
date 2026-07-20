@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
+import { AttendanceOverview } from '@/components/dashboard/AttendanceOverview';
 import { formatTime, formatDate, getDayName, cn } from '@/lib/utils';
 import { downloadFile } from '@/lib/download';
 import Link from 'next/link';
@@ -16,9 +17,14 @@ import { useRouter } from 'next/navigation';
 
 interface GroupDetail {
   id: string; name: string; branch_name: string; teacher_name: string | null;
+  teacher_user_id: string | null; teacher_first_name: string | null; teacher_last_name: string | null;
+  teacher_avatar_url: string | null; teacher_phone: string | null; teacher_email: string | null;
   student_count: string; max_students: number; is_active: boolean; description: string | null; start_date: string | null;
   students: Array<{ id: string; first_name: string; last_name: string; username: string; avatar_url: string | null }>;
   schedules: Array<{ id: string; day_of_week: number; start_time: string; end_time: string; classroom: string | null }>;
+  attendanceToday?: { total: string; present_count: string; absent_count: string; late_count: string };
+  attendanceTrend?: Array<{ session_date: string; present_count: string; absent_count: string; late_count: string; total: string }>;
+  stats?: { sessions: number; attendancePct: number };
 }
 
 interface Student { id: string; first_name: string; last_name: string; username: string; avatar_url: string | null; }
@@ -158,8 +164,8 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
               </Badge>
             </div>
 
-            {/* Stats - simplified colors */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
+            {/* Stats - dashboard-style tiles */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-5">
               <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
                 <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('groups.teacher')}</p>
                 <p className="text-sm font-medium text-gray-900 dark:text-white mt-0.5">
@@ -178,18 +184,18 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                   {formatDate(group.start_date)}
                 </p>
               </div>
-              {/* <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
-                <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('groups.students')}</p>
-                <p className="text-sm font-medium text-gray-900 dark:text-white mt-0.5">
-                  {group.students.length}
+              <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3 text-center">
+                <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('users.totalSessions')}</p>
+                <p className="text-sm font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
+                  {group.stats?.sessions ?? 0}
                 </p>
-              </div> */}
-              {/* <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
-                <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('schedule.sessions')}</p>
-                <p className="text-sm font-medium text-gray-900 dark:text-white mt-0.5">
-                  {group.schedules.length}
+              </div>
+              <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-3 text-center">
+                <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('dashboard.attendanceRate')}</p>
+                <p className="text-sm font-semibold text-green-600 dark:text-green-400 mt-0.5">
+                  {group.stats?.attendancePct ?? 0}%
                 </p>
-              </div> */}
+              </div>
             </div>
 
             {/* Actions */}
@@ -228,6 +234,50 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
             )}
           </div>
         </div>
+
+        {/* O'qituvchi profili — bosilsa o'qituvchining profil sahifasi ochiladi */}
+        {group.teacher_user_id && (
+          <Link href={`/users/${group.teacher_user_id}`} className="block group/teacher">
+            <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm px-5 py-4 flex items-center gap-4 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
+              <Avatar
+                firstName={group.teacher_first_name || (group.teacher_name || '').split(' ')[0] || ''}
+                lastName={group.teacher_last_name || (group.teacher_name || '').split(' ')[1] || ''}
+                avatarUrl={group.teacher_avatar_url}
+                size="lg"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('groups.teacher')}</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white truncate group-hover/teacher:text-blue-600 dark:group-hover/teacher:text-blue-400 transition-colors">
+                  {group.teacher_name}
+                </p>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-0.5">
+                  {group.teacher_phone && (
+                    <span className="text-xs text-gray-400 flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                      </svg>
+                      {group.teacher_phone}
+                    </span>
+                  )}
+                  {group.teacher_email && (
+                    <span className="text-xs text-gray-400 flex items-center gap-1 truncate">
+                      <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                      {group.teacher_email}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <svg className="w-4 h-4 text-gray-300 group-hover/teacher:text-blue-500 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
+          </Link>
+        )}
+
+        {/* Attendance charts — same as the dashboard, scoped to this group only */}
+        <AttendanceOverview attendanceToday={group.attendanceToday} attendanceTrend={group.attendanceTrend} />
 
         {/* Schedule */}
         {group.schedules.length > 0 && (

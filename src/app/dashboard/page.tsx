@@ -70,14 +70,14 @@ export default function DashboardPage() {
   }, [user]);
 
   useEffect(() => {
-    if (user?.role !== 'super_admin') return;
+    if (user?.role !== 'super_admin' && user?.role !== 'observer') return;
     api.get<{ data: DashBranch[] }>('/api/branches', { limit: 8 })
       .then(d => setBranches(d.data))
       .catch(() => {});
   }, [user]);
 
   useEffect(() => {
-    if (user?.role !== 'super_admin' && user?.role !== 'branch_admin') return;
+    if (user?.role !== 'super_admin' && user?.role !== 'branch_admin' && user?.role !== 'observer') return;
     // The API scopes automatically: branch admins only get their own branch's groups
     api.get<{ data: DashGroup[] }>('/api/groups', { is_active: true, limit: 8 })
       .then(d => setGroups(d.data))
@@ -168,7 +168,7 @@ export default function DashboardPage() {
               color="green"
               icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>}
             />
-            {data?.stats.branches !== null && user?.role === 'super_admin' ? (
+            {data?.stats.branches !== null && (user?.role === 'super_admin' || user?.role === 'observer') ? (
               <StatCard
                 title={t('dashboard.totalBranches')}
                 value={data?.stats.branches ?? 0}
@@ -194,8 +194,8 @@ export default function DashboardPage() {
 
         <AttendanceOverview attendanceToday={data?.attendanceToday} attendanceTrend={data?.attendanceTrend} />
 
-        {/* Branches (super admin) */}
-        {user?.role === 'super_admin' && branches.length > 0 && (
+        {/* Branches (super admin / observer) */}
+        {(user?.role === 'super_admin' || user?.role === 'observer') && branches.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
@@ -286,7 +286,7 @@ export default function DashboardPage() {
         )}
 
         {/* Groups */}
-        {(user?.role === 'super_admin' || user?.role === 'branch_admin') && groups.length > 0 && (
+        {(user?.role === 'super_admin' || user?.role === 'branch_admin' || user?.role === 'observer') && groups.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">

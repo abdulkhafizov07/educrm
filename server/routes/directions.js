@@ -112,7 +112,39 @@ router.get('/:id', async (req, res) => {
       [id]
     );
 
-    res.json({ ...rows[0], groups });
+    // Teachers in this direction — assigned via users.direction_id OR teaching one of its groups
+    const { rows: teachers } = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.avatar_url, u.phone,
+         b.name as branch_name,
+         COUNT(DISTINCT g.id) as group_count
+       FROM users u
+       LEFT JOIN branches b ON u.branch_id = b.id
+       LEFT JOIN groups g ON g.teacher_id = u.id AND g.direction_id = $1
+       WHERE u.role = 'teacher' AND u.is_active = true
+         AND (u.direction_id = $1 OR g.id IS NOT NULL)
+       GROUP BY u.id, b.name
+       ORDER BY u.first_name, u.last_name`,
+      [id]
+    );
+
+    // Students in this direction — assigned via users.direction_id OR enrolled in one of its groups.
+    // Each row carries filial + guruh info so lists can show them next to the name.
+    const { rows: students } = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.avatar_url, u.phone,
+         b.name as branch_name,
+         (SELECT string_agg(g3.name, ', ') FROM group_students gs3 JOIN groups g3 ON gs3.group_id = g3.id
+          WHERE gs3.student_id = u.id) as group_names
+       FROM users u
+       LEFT JOIN branches b ON u.branch_id = b.id
+       WHERE u.role = 'student' AND u.is_active = true AND u.graduated_at IS NULL
+         AND (u.direction_id = $1 OR EXISTS (
+           SELECT 1 FROM group_students gs2 JOIN groups g2 ON gs2.group_id = g2.id
+           WHERE gs2.student_id = u.id AND g2.direction_id = $1))
+       ORDER BY u.first_name, u.last_name`,
+      [id]
+    );
+
+    res.json({ ...rows[0], groups, teachers, students });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

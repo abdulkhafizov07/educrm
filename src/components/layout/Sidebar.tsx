@@ -107,16 +107,19 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
   const [usersExpanded, setUsersExpanded] = useState(pathname.startsWith('/users'));
 
+  // Observer: read-only role — sees everything down to Users, nothing beyond.
+  // Teacher: can open Students (view + add) but not Staff.
   const navItems: NavItem[] = [
-    { href: '/dashboard', icon: <DashIcon />, label: t('nav.dashboard'), roles: ['super_admin', 'branch_admin', 'teacher', 'student'] },
-    { href: '/branches', icon: <BranchIcon />, label: t('nav.branches'), roles: ['super_admin'] },
-    { href: '/directions', icon: <DirectionIcon />, label: t('nav.directions'), roles: ['super_admin', 'branch_admin'] },
-    { href: '/groups', icon: <GroupIcon />, label: t('nav.groups'), roles: ['super_admin', 'branch_admin', 'teacher'] },
+    { href: '/dashboard', icon: <DashIcon />, label: t('nav.dashboard'), roles: ['super_admin', 'branch_admin', 'teacher', 'student', 'observer'] },
+    { href: '/branches', icon: <BranchIcon />, label: t('nav.branches'), roles: ['super_admin', 'observer'] },
+    { href: '/directions', icon: <DirectionIcon />, label: t('nav.directions'), roles: ['super_admin', 'branch_admin', 'observer'] },
+    { href: '/groups', icon: <GroupIcon />, label: t('nav.groups'), roles: ['super_admin', 'branch_admin', 'teacher', 'observer'] },
     {
-      href: '/users', icon: <UsersIcon />, label: t('nav.users'), roles: ['super_admin', 'branch_admin'],
+      href: '/users', icon: <UsersIcon />, label: t('nav.users'), roles: ['super_admin', 'branch_admin', 'teacher', 'observer'],
       children: [
         { href: '/users/students', label: t('nav.students') },
-        { href: '/users/staff', label: t('nav.staff') },
+        // Teachers only manage students; the staff list stays admin/observer-only
+        ...(user?.role !== 'teacher' ? [{ href: '/users/staff', label: t('nav.staff') }] : []),
       ],
     },
     { href: '/graduates', icon: <GradIcon />, label: t('nav.graduates'), roles: ['super_admin', 'branch_admin'] },

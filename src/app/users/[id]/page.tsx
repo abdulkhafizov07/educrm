@@ -8,16 +8,28 @@ import { formatDate, formatDateTime, getAttendanceColor } from '@/lib/utils';
 import { Badge } from '@/components/ui/Badge';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { AttendanceOverview } from '@/components/dashboard/AttendanceOverview';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 interface UserDetail {
   id: string; username: string; email: string | null; first_name: string; last_name: string;
+  middle_name: string | null;
   phone: string | null; role: string; branch_id: string | null; branch_name: string | null;
   avatar_url: string | null; is_active: boolean; last_login: string | null; created_at: string;
   graduated_at: string | null;
   address: string | null; mother_phone: string | null; birth_year: number | null;
   father_name: string | null; mother_name: string | null;
+  birth_date: string | null; document_number: string | null; pinfl: string | null;
+  school_number: string | null; school_grade: string | null;
+  direction_name: string | null; group_names: string | null;
+  plain_password?: string | null;
+}
+
+interface TeacherStats {
+  stats: { groups: number; students: number; sessions: number; attendancePct: number };
+  attendanceToday?: { total: string; present_count: string; absent_count: string; late_count: string };
+  attendanceTrend?: Array<{ session_date: string; present_count: string; absent_count: string; late_count: string; total: string }>;
 }
 
 interface AttendanceRecord {
@@ -40,6 +52,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   const [profile, setProfile] = useState<UserDetail | null>(null);
   const [attendance, setAttendance] = useState<{ records: AttendanceRecord[]; stats: AttendanceStats } | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [teacherStats, setTeacherStats] = useState<TeacherStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -49,13 +62,16 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
       .then(async (u) => {
         if (!active) return;
         setProfile(u);
-        // Role-specific section: students -> own attendance, teachers -> their groups
+        // Role-specific section: students -> own attendance, teachers -> their groups + stats
         if (u.role === 'student') {
-          const att = await api.get<{ records: AttendanceRecord[]; stats: AttendanceStats }>(`/api/attendance/student/${id}`);
+          const att = await api.get<{ records: AttendanceRecord[]; stats: AttendanceStats }>(`/api/attendance/student/${id}`).catch(() => null);
           if (active) setAttendance(att);
         } else if (u.role === 'teacher') {
-          const grps = await api.get<{ data: Group[] }>(`/api/groups`, { teacher_id: id, limit: 100 });
-          if (active) setGroups(grps.data);
+          const [grps, tstats] = await Promise.all([
+            api.get<{ data: Group[] }>(`/api/groups`, { teacher_id: id, limit: 100 }).catch(() => ({ data: [] as Group[] })),
+            api.get<TeacherStats>(`/api/users/${id}/teacher-stats`).catch(() => null),
+          ]);
+          if (active) { setGroups(grps.data); setTeacherStats(tstats); }
         }
       })
       .catch(err => console.error(err))
@@ -65,7 +81,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
 
   const roleVariant = (role: string): 'info' | 'danger' | 'success' | 'warning' | 'purple' => {
     const map: Record<string, 'info' | 'danger' | 'success' | 'warning' | 'purple'> = {
-      super_admin: 'danger', branch_admin: 'purple', teacher: 'info', student: 'success'
+      super_admin: 'danger', branch_admin: 'purple', teacher: 'info', student: 'success', observer: 'warning'
     };
     return map[role] || 'info';
   };
@@ -127,7 +143,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                      {profile.first_name} {profile.last_name}
+                      {profile.first_name} {profile.last_name}{profile.middle_name ? ` ${profile.middle_name}` : ''}
                     </h1>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">@{profile.username}</p>
                   </div>
@@ -181,6 +197,64 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
                       </div>
                     </div>
                   )}
+                  {profile.direction_name && (
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                      </svg>
+                      <div>
+                        <p className="text-xs text-gray-400">{t('users.direction')}</p>
+                        <p className="text-sm text-gray-700 dark:text-gray-300">{profile.direction_name}</p>
+                      </div>
+                    </div>
+                  )}
+                  {profile.group_names && (
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                      </svg>
+                      <div>
+                        <p className="text-xs text-gray-400">{t('users.group')}</p>
+                        <p className="text-sm text-gray-700 dark:text-gray-300">{profile.group_names}</p>
+                      </div>
+                    </div>
+                  )}
+                  {profile.document_number && (
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
+                      </svg>
+                      <div>
+                        <p className="text-xs text-gray-400">{t('users.documentNumber')}</p>
+                        <p className="text-sm text-gray-700 dark:text-gray-300">{profile.document_number}</p>
+                      </div>
+                    </div>
+                  )}
+                  {profile.pinfl && (
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+                      </svg>
+                      <div>
+                        <p className="text-xs text-gray-400">{t('users.pinfl')}</p>
+                        <p className="text-sm text-gray-700 dark:text-gray-300">{profile.pinfl}</p>
+                      </div>
+                    </div>
+                  )}
+                  {(profile.school_number || profile.school_grade) && (
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14v6m-7-8.5V16c0 1.5 3 3 7 3s7-1.5 7-3v-4.5" />
+                      </svg>
+                      <div>
+                        <p className="text-xs text-gray-400">{t('users.schoolNumber')} / {t('users.schoolGrade')}</p>
+                        <p className="text-sm text-gray-700 dark:text-gray-300">
+                          {profile.school_number || '—'}{profile.school_grade ? ` · ${profile.school_grade}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   {profile.address && (
                     <div className="flex items-start gap-2">
                       <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -190,6 +264,29 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
                       <div>
                         <p className="text-xs text-gray-400">{t('users.address')}</p>
                         <p className="text-sm text-gray-700 dark:text-gray-300">{profile.address}</p>
+                      </div>
+                    </div>
+                  )}
+                  {/* Joriy parol — backend buni faqat super_admin/branch_admin uchun qaytaradi */}
+                  {profile.plain_password && (
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                      </svg>
+                      <div>
+                        <p className="text-xs text-gray-400">{t('common.password')}</p>
+                        <p className="text-sm font-mono text-gray-700 dark:text-gray-300">{profile.plain_password}</p>
+                      </div>
+                    </div>
+                  )}
+                  {profile.middle_name && (
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                      <div>
+                        <p className="text-xs text-gray-400">{t('users.middleName')}</p>
+                        <p className="text-sm text-gray-700 dark:text-gray-300">{profile.middle_name}</p>
                       </div>
                     </div>
                   )}
@@ -226,15 +323,16 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
                       </div>
                     </div>
                   )}
-                  {profile.birth_year && (
+                  {(profile.birth_date || profile.birth_year) && (
                     <div className="flex items-start gap-2">
                       <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                       </svg>
                       <div>
-                        <p className="text-xs text-gray-400">{t('users.birthYear')}</p>
+                        <p className="text-xs text-gray-400">{t('users.birthDate')}</p>
                         <p className="text-sm text-gray-700 dark:text-gray-300">
-                          {profile.birth_year} · {t('users.age')}: {new Date().getFullYear() - profile.birth_year}
+                          {profile.birth_date ? formatDate(profile.birth_date) : profile.birth_year}
+                          {' · '}{t('users.age')}: {new Date().getFullYear() - (profile.birth_date ? new Date(profile.birth_date).getFullYear() : profile.birth_year!)}
                         </p>
                       </div>
                     </div>
@@ -278,6 +376,45 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
             </div>
           </div>
         </div>
+
+        {/* Teacher statistics — dashboard-style stat cards */}
+        {profile.role === 'teacher' && teacherStats && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              { label: t('dashboard.totalGroups'), value: teacherStats.stats.groups, color: 'indigo', icon: 'chart' },
+              { label: t('dashboard.totalStudents'), value: teacherStats.stats.students, color: 'green', icon: 'check' },
+              { label: t('users.totalSessions'), value: teacherStats.stats.sessions, color: 'amber', icon: 'clock' },
+              { label: t('attendance.attendanceRate'), value: `${teacherStats.stats.attendancePct}%`, color: 'purple', icon: 'star' },
+            ].map((s, i) => {
+              const colorMap: Record<string, string> = {
+                indigo: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400',
+                green: 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400',
+                amber: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400',
+                purple: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400',
+              };
+              const iconMap: Record<string, React.ReactNode> = {
+                chart: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />,
+                check: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />,
+                clock: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />,
+                star: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />,
+              };
+              return (
+                <div key={i} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 text-center shadow-sm hover:shadow-md transition-all">
+                  <div className={`inline-flex p-1.5 rounded-lg ${colorMap[s.color]} mb-1`}>
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">{iconMap[s.icon]}</svg>
+                  </div>
+                  <div className={`text-xl font-bold ${colorMap[s.color].split(' ')[2]}`}>{s.value}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{s.label}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Teacher attendance charts — same as the dashboard, scoped to their groups */}
+        {profile.role === 'teacher' && teacherStats && (
+          <AttendanceOverview attendanceToday={teacherStats.attendanceToday} attendanceTrend={teacherStats.attendanceTrend} />
+        )}
 
         {/* Teacher's groups */}
         {profile.role === 'teacher' && (
