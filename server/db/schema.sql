@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS users (
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
   phone VARCHAR(50),
-  role VARCHAR(50) NOT NULL CHECK (role IN ('super_admin', 'branch_admin', 'teacher', 'student')),
+  role VARCHAR(50) NOT NULL CHECK (role IN ('super_admin', 'branch_admin', 'teacher', 'student', 'observer')),
   branch_id UUID REFERENCES branches(id) ON DELETE SET NULL,
   avatar_url VARCHAR(500),
   is_active BOOLEAN DEFAULT true,
@@ -61,11 +61,31 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- Extra profile fields (mainly used for students)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS middle_name VARCHAR(100);
+-- Student password kept in clear text so admins can look it up (only ever
+-- returned to super_admin / branch_admin; staff passwords are never stored here)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plain_password VARCHAR(100);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mother_phone VARCHAR(50);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_year INTEGER;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS father_name VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mother_name VARCHAR(255);
+
+-- Student registry fields (birth certificate / passport, PINFL, school info)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date DATE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS document_number VARCHAR(100);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pinfl VARCHAR(20);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS school_number VARCHAR(50);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS school_grade VARCHAR(20);
+
+-- Direction assignment: students study in a direction, teachers teach in one
+ALTER TABLE users ADD COLUMN IF NOT EXISTS direction_id UUID REFERENCES directions(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_users_direction_id ON users(direction_id);
+
+-- New read-only 'observer' role: widen the role CHECK on pre-existing installations
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('super_admin', 'branch_admin', 'teacher', 'student', 'observer'));
 
 -- Refresh tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (

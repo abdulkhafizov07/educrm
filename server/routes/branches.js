@@ -160,12 +160,31 @@ router.get('/:id', async (req, res) => {
     // teaching at least one group in the branch. group_count is groups taught here.
     const { rows: teachers } = await query(
       `SELECT u.id, u.first_name, u.last_name, u.username, u.avatar_url,
+         d.name as direction_name,
          COUNT(DISTINCT g.id) as group_count
        FROM users u
+       LEFT JOIN directions d ON u.direction_id = d.id
        LEFT JOIN groups g ON g.teacher_id = u.id AND g.branch_id = $1
        WHERE u.role = 'teacher' AND u.is_active = true
          AND (u.branch_id = $1 OR g.id IS NOT NULL)
-       GROUP BY u.id
+       GROUP BY u.id, d.name
+       ORDER BY u.first_name, u.last_name`,
+      [id]
+    );
+
+    // Students in this branch — directly assigned OR enrolled in one of its groups.
+    // Rows carry guruh + yo'nalish so the list can show them next to the name.
+    const { rows: students } = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.avatar_url, u.phone,
+         d.name as direction_name,
+         (SELECT string_agg(g3.name, ', ') FROM group_students gs3 JOIN groups g3 ON gs3.group_id = g3.id
+          WHERE gs3.student_id = u.id) as group_names
+       FROM users u
+       LEFT JOIN directions d ON u.direction_id = d.id
+       WHERE u.role = 'student' AND u.is_active = true AND u.graduated_at IS NULL
+         AND (u.branch_id = $1 OR EXISTS (
+           SELECT 1 FROM group_students gs JOIN groups g2 ON gs.group_id = g2.id
+           WHERE gs.student_id = u.id AND g2.branch_id = $1 AND g2.is_active = true))
        ORDER BY u.first_name, u.last_name`,
       [id]
     );
@@ -210,7 +229,7 @@ router.get('/:id', async (req, res) => {
       [id]
     );
 
-    res.json({ ...rows[0], groups, admins, teachers, directions, attendanceToday: attendanceToday[0], attendanceTrend });
+    res.json({ ...rows[0], groups, admins, teachers, students, directions, attendanceToday: attendanceToday[0], attendanceTrend });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
   }

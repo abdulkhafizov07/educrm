@@ -6,6 +6,28 @@ const { log } = require('../utils/logger');
 const router = express.Router();
 router.use(verifyToken);
 
+// O'qituvchining boshqa faol guruhlarida vaqt to'qnashuvini tekshiradi.
+// To'qnashuv bo'lsa xabar (string), bo'lmasa null. excludeGroupId yangi guruhda null bo'ladi.
+async function teacherConflict(teacherId, excludeGroupId, days, startTime, endTime) {
+  if (!teacherId || !Array.isArray(days) || !days.length) return null;
+  const valid = [...new Set(days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))];
+  if (!valid.length) return null;
+  const start = startTime || '09:00';
+  const end = endTime || '11:00';
+  const { rows } = await query(
+    `SELECT g.name, s.start_time, s.end_time
+     FROM schedules s JOIN groups g ON s.group_id = g.id
+     WHERE g.teacher_id = $1 AND ($2::uuid IS NULL OR g.id != $2) AND g.is_active = true
+       AND s.day_of_week = ANY($3) AND s.start_time < $5 AND s.end_time > $4
+     LIMIT 1`,
+    [teacherId, excludeGroupId || null, valid, start, end]
+  );
+  if (!rows.length) return null;
+  const c = rows[0];
+  const hhmm = (t) => String(t).slice(0, 5);
+  return `O'qituvchi bu vaqtda boshqa guruhda darsda: "${c.name}" (${hhmm(c.start_time)}–${hhmm(c.end_time)})`;
+}
+
 // Replace a group's weekly lesson schedule with the given weekdays (0=Sun..6=Sat).
 // `days` undefined => leave existing schedule untouched; [] => clear it.
 async function replaceSchedules(groupId, days, startTime, endTime) {
@@ -87,7 +109,9 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     const { rows } = await query(
       `SELECT g.*, b.name as branch_name, dir.name as direction_name, dir.color as direction_color,
-         CONCAT(t.first_name, ' ', t.last_name) as teacher_name, t.id as teacher_user_id
+         CONCAT(t.first_name, ' ', t.last_name) as teacher_name, t.id as teacher_user_id,
+         t.first_name as teacher_first_name, t.last_name as teacher_last_name,
+         t.avatar_url as teacher_avatar_url, t.phone as teacher_phone, t.email as teacher_email
        FROM groups g
        LEFT JOIN branches b ON g.branch_id = b.id
        LEFT JOIN directions dir ON g.direction_id = dir.id
@@ -113,7 +137,52 @@ router.get('/:id', async (req, res) => {
     // Get schedule
     const { rows: schedules } = await query('SELECT * FROM schedules WHERE group_id = $1 ORDER BY day_of_week, start_time', [id]);
 
-    res.json({ ...rows[0], students, schedules });
+    // Dashboard-style attendance stats scoped to this group
+    const [attendanceToday, attendanceTrend, overall] = await Promise.all([
+      query(
+        `SELECT COUNT(ar.id) as total,
+           SUM(CASE WHEN ar.status = 'present' THEN 1 ELSE 0 END) as present_count,
+           SUM(CASE WHEN ar.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+           SUM(CASE WHEN ar.status = 'late' THEN 1 ELSE 0 END) as late_count
+         FROM attendance_records ar
+         JOIN attendance_sessions s ON ar.session_id = s.id
+         WHERE s.session_date = CURRENT_DATE AND s.group_id = $1`,
+        [id]
+      ),
+      query(
+        `SELECT s.session_date,
+           SUM(CASE WHEN ar.status = 'present' THEN 1 ELSE 0 END) as present_count,
+           SUM(CASE WHEN ar.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+           SUM(CASE WHEN ar.status = 'late' THEN 1 ELSE 0 END) as late_count,
+           COUNT(ar.id) as total
+         FROM attendance_sessions s
+         JOIN attendance_records ar ON ar.session_id = s.id
+         WHERE s.session_date >= CURRENT_DATE - INTERVAL '7 days' AND s.group_id = $1
+         GROUP BY s.session_date ORDER BY s.session_date`,
+        [id]
+      ),
+      query(
+        `SELECT COUNT(ar.id) as total,
+           SUM(CASE WHEN ar.status IN ('present', 'late') THEN 1 ELSE 0 END) as attended,
+           COUNT(DISTINCT s.id) as sessions
+         FROM attendance_records ar
+         JOIN attendance_sessions s ON ar.session_id = s.id
+         WHERE s.group_id = $1`,
+        [id]
+      ),
+    ]);
+
+    const o = overall.rows[0];
+    const totalRecords = parseInt(o.total) || 0;
+    res.json({
+      ...rows[0], students, schedules,
+      attendanceToday: attendanceToday.rows[0],
+      attendanceTrend: attendanceTrend.rows,
+      stats: {
+        sessions: parseInt(o.sessions) || 0,
+        attendancePct: totalRecords ? Math.round((parseInt(o.attended) / totalRecords) * 100) : 0,
+      },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -128,6 +197,12 @@ router.post('/', requireRole('super_admin', 'branch_admin'), async (req, res) =>
     if (!name || !branch_id) return res.status(400).json({ error: 'Name and branch_id required' });
 
     if (req.user.role === 'branch_admin' && branch_id !== req.user.branch_id) return res.status(403).json({ error: 'Access denied' });
+
+    // O'qituvchining boshqa guruhlari bilan vaqt to'qnashuvini oldindan tekshiramiz
+    if (teacher_id && Array.isArray(schedule_days)) {
+      const conflict = await teacherConflict(teacher_id, null, schedule_days, start_time, end_time);
+      if (conflict) return res.status(409).json({ error: conflict });
+    }
 
     // start_date left blank => fall back to today (COALESCE keeps the column's default behaviour)
     const { rows } = await query(
@@ -157,6 +232,23 @@ router.put('/:id', requireRole('super_admin', 'branch_admin'), async (req, res) 
     const { rows: existing } = await query('SELECT * FROM groups WHERE id = $1', [id]);
     if (!existing.length) return res.status(404).json({ error: 'Group not found' });
     if (req.user.role === 'branch_admin' && existing[0].branch_id !== req.user.branch_id) return res.status(403).json({ error: 'Access denied' });
+
+    // O'qituvchi bandligi: yangi jadval yuborilgan bo'lsa — shu jadval bilan;
+    // faqat o'qituvchi almashsa — guruhning mavjud jadval kunlari bilan tekshiramiz
+    const effTeacher = teacher_id !== undefined ? (teacher_id || null) : existing[0].teacher_id;
+    if (effTeacher) {
+      let conflict = null;
+      if (Array.isArray(schedule_days)) {
+        conflict = await teacherConflict(effTeacher, id, schedule_days, start_time, end_time);
+      } else if (teacher_id !== undefined && teacher_id !== existing[0].teacher_id) {
+        const { rows: curSch } = await query('SELECT day_of_week, start_time, end_time FROM schedules WHERE group_id = $1', [id]);
+        for (const s of curSch) {
+          conflict = await teacherConflict(effTeacher, id, [s.day_of_week], s.start_time, s.end_time);
+          if (conflict) break;
+        }
+      }
+      if (conflict) return res.status(409).json({ error: conflict });
+    }
 
     const updates = []; const params = []; let idx = 1;
     if (name !== undefined) { updates.push(`name = $${idx++}`); params.push(name); }

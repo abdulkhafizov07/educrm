@@ -37,19 +37,34 @@ html {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+/* Scrollbars: horizontal one (under wide tables/lists) is taller so it's easy to grab */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 14px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db;
-  border-radius: 3px;
+  background: #c6ccd6;
+  border-radius: 7px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a3adbc;
 }
 .dark ::-webkit-scrollbar-thumb {
   background: #374151;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
+}
+
+/* Firefox */
+html {
+  scrollbar-color: #c6ccd6 transparent;
+}
+html.dark {
+  scrollbar-color: #374151 transparent;
 }
 
 @keyframes slide-in-from-right {

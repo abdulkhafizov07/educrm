@@ -57,16 +57,41 @@ async function seed() {
     const insertUser = async (fields) => {
       const { rows } = await client.query(
         `INSERT INTO users (username, email, password_hash, first_name, last_name, phone, role, branch_id,
-                            address, mother_phone, birth_year, father_name, mother_name)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+                            address, mother_phone, birth_year, father_name, mother_name,
+                            birth_date, document_number, pinfl, school_number, school_grade, direction_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
         [fields.username, fields.email || null, hash, fields.first_name, fields.last_name, fields.phone || null,
          fields.role, fields.branch_id || null, fields.address || null, fields.mother_phone || null,
-         fields.birth_year || null, fields.father_name || null, fields.mother_name || null]
+         fields.birth_year || null, fields.father_name || null, fields.mother_name || null,
+         fields.birth_date || null, fields.document_number || null, fields.pinfl || null,
+         fields.school_number || null, fields.school_grade || null, fields.direction_id || null]
       );
       return rows[0].id;
     };
 
+    // O'quvchining registr maydonlarini tug'ilgan yildan hosil qiladi
+    const studentRegistry = (birthYear) => {
+      const birth_date = `${birthYear}-${String(rndInt(1, 12)).padStart(2, '0')}-${String(rndInt(1, 28)).padStart(2, '0')}`;
+      const age = new Date().getFullYear() - birthYear;
+      const document_number = age >= 16
+        ? `A${String.fromCharCode(65 + rndInt(0, 3))} ${rndInt(1000000, 9999999)}`
+        : `${rnd(['I-YU', 'II-YU', 'III-CH', 'I-MU', 'II-SA'])} ${rndInt(100000, 999999)}`;
+      const pinfl = `${rndInt(3, 6)}${birth_date.slice(8, 10)}${birth_date.slice(5, 7)}${String(birthYear).slice(2)}${rndInt(1000000, 9999999)}`.slice(0, 14);
+      return {
+        birth_date, document_number, pinfl,
+        school_number: String(rndInt(1, 320)),
+        school_grade: `${Math.min(11, Math.max(1, age - 6))}-${rnd(['A', 'B', 'V', 'G'])}`,
+      };
+    };
+
     await client.query('BEGIN');
+
+    // Kuzatuvchi (observer) — hamma narsani ko'radi, hech narsani o'zgartira olmaydi
+    await insertUser({
+      username: 'kuzatuvchi', email: 'observer@educrm.uz',
+      first_name: 'Kuzatuvchi', last_name: 'Nazoratchi',
+      phone: phone(), role: 'observer',
+    });
 
     let totals = { branches: 0, directions: 0, groups: 0, teachers: 0, students: 0, admins: 0, sessions: 0 };
 
@@ -143,15 +168,18 @@ async function seed() {
             const first = male ? rnd(MALE_FIRST) : rnd(FEMALE_FIRST);
             let last = rnd(LAST_NAMES);
             if (!male) last += 'a';
+            const birthYear = rndInt(2005, 2015);
             const id = await insertUser({
               username: `student_${String(userSeq).padStart(3, '0')}`,
               email: `student${userSeq}@educrm.uz`,
               first_name: first, last_name: last,
               phone: phone(), role: 'student', branch_id: branchId,
               address: `${rnd(STREETS)} ko'chasi ${rndInt(1, 99)}-uy`,
-              mother_phone: phone(), birth_year: rndInt(2005, 2015),
+              mother_phone: phone(), birth_year: birthYear,
               father_name: `${rnd(FATHER_NAMES)} ${last.replace(/a$/, '')}`,
               mother_name: `${rnd(MOTHER_NAMES)} ${last.endsWith('a') ? last : last + 'a'}`,
+              direction_id: directionId,
+              ...studentRegistry(birthYear),
             });
             userSeq++;
             studentIds.push(id);
@@ -194,6 +222,18 @@ async function seed() {
       }
     }
 
+    // O'qituvchilarga yo'nalish: o'zi dars beradigan guruhlarning eng ko'p uchraydigan yo'nalishi
+    await client.query(`
+      UPDATE users u SET direction_id = sub.direction_id
+      FROM (
+        SELECT DISTINCT ON (g.teacher_id) g.teacher_id, g.direction_id
+        FROM groups g
+        WHERE g.direction_id IS NOT NULL AND g.teacher_id IS NOT NULL
+        GROUP BY g.teacher_id, g.direction_id
+        ORDER BY g.teacher_id, COUNT(*) DESC
+      ) sub
+      WHERE u.id = sub.teacher_id AND u.role = 'teacher' AND u.direction_id IS NULL`);
+
     await client.query('COMMIT');
 
     console.log('Seed muvaffaqiyatli yakunlandi:');
@@ -203,6 +243,7 @@ async function seed() {
     console.log(`  Adminlar:      ${totals.admins} (admin_1..admin_5)`);
     console.log(`  O'qituvchilar: ${totals.teachers} (teacher_1_1..teacher_5_3)`);
     console.log(`  O'quvchilar:   ${totals.students} (student_001...)`);
+    console.log(`  Kuzatuvchi:    kuzatuvchi (observer roli)`);
     console.log(`  Davomat sessiyalari: ${totals.sessions}`);
     console.log(`  Barcha seed foydalanuvchilar paroli: ${PASSWORD}`);
   } catch (err) {

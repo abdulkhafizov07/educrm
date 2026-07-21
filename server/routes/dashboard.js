@@ -65,7 +65,7 @@ router.get('/stats', async (req, res) => {
                 [bid]
               )
             : query(`SELECT COUNT(*) FROM users WHERE role = 'teacher' AND is_active = true ${branchFilter}`),
-      role === 'super_admin'
+      role === 'super_admin' || role === 'observer'
         ? query(`SELECT COUNT(*) FROM branches WHERE is_active = true`)
         : query(`SELECT 1 as count`),
       query(`SELECT COUNT(*) FROM groups g WHERE g.is_active = true ${gScope}`),
@@ -108,7 +108,7 @@ router.get('/stats', async (req, res) => {
       stats: {
         students: parseInt(students.rows[0].count),
         teachers: parseInt(teachers.rows[0].count),
-        branches: role === 'super_admin' ? parseInt(branches.rows[0].count) : null,
+        branches: role === 'super_admin' || role === 'observer' ? parseInt(branches.rows[0].count) : null,
         groups: parseInt(groups.rows[0].count),
       },
       attendanceToday: attendanceToday.rows[0],

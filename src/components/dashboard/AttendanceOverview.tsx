@@ -1,6 +1,6 @@
 'use client';
 import { useI18n } from '@/contexts/I18nContext';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 interface AttendanceToday {
   total: string;
@@ -22,9 +22,6 @@ interface AttendanceOverviewProps {
   attendanceTrend?: AttendanceTrendPoint[];
 }
 
-// Ranglar: present -> yashil, absent -> qizil, late -> sariq
-const PIE_COLORS = ['#22c55e', '#ef4444', '#f59e0b'];
-
 // Today's attendance donut + 7-day trend bars — shared by the Dashboard (system/branch-scoped)
 // and a single Branch's detail page (that branch's groups only).
 export function AttendanceOverview({ attendanceToday, attendanceTrend }: AttendanceOverviewProps) {
@@ -36,10 +33,11 @@ export function AttendanceOverview({ attendanceToday, attendanceTrend }: Attenda
   const totalN = parseInt(attendanceToday?.total || '0');
   const attendancePct = totalN > 0 ? Math.round(((presentN + lateN) / totalN) * 100) : 0;
 
+  // Rang har bir elementga biriktirilgan — 0 qiymatlilar tushib qolganda ranglar surilib ketmaydi
   const pieData = [
-    { name: t('dashboard.present'), value: presentN },
-    { name: t('dashboard.absent'), value: absentN },
-    { name: t('dashboard.late'), value: lateN },
+    { name: t('dashboard.present'), value: presentN, color: '#22c55e' },
+    { name: t('dashboard.absent'), value: absentN, color: '#ef4444' },
+    { name: t('dashboard.late'), value: lateN, color: '#f59e0b' },
   ].filter(d => d.value > 0);
 
   const trendData = (attendanceTrend || []).map(d => ({
@@ -57,39 +55,46 @@ export function AttendanceOverview({ attendanceToday, attendanceTrend }: Attenda
           {t('dashboard.todayAttendance')}
         </h2>
         {totalN === 0 ? (
-          <div className="flex items-center justify-center h-40 text-sm text-gray-400">
+          <div className="flex items-center justify-center h-52 text-sm text-gray-400">
             No sessions today
           </div>
         ) : (
           <>
-            <ResponsiveContainer width="100%" height={160}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={40}
-                  outerRadius={70}
-                  paddingAngle={3}
-                  dataKey="value"
-                >
-                  {pieData.map((_, index) => (
-                    <Cell key={index} fill={PIE_COLORS[index]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => [value, '']} />
-                <Legend iconType="circle" iconSize={8} />
-              </PieChart>
-            </ResponsiveContainer>
-
-            {/* Faqat davomat foizi */}
-            <div className="text-center mt-2">
-              <span className="text-2xl font-semibold text-gray-900 dark:text-white">
-                {attendancePct}%
-              </span>
-              <span className="text-sm text-gray-400 ml-1">
-                {t('dashboard.attendanceRate')}
-              </span>
+            {/* Doira — legenda recharts'dan tashqarida (HTML) chiziladi, matn ustma-ust tushmaydi */}
+            <div className="relative">
+              <ResponsiveContainer width="100%" height={190}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={76}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={index} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => [value, '']} />
+                </PieChart>
+              </ResponsiveContainer>
+              {/* Davomat foizi — doira markazida */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-2xl font-bold text-gray-900 dark:text-white leading-none">{attendancePct}%</span>
+                <span className="text-[10px] text-gray-400 mt-1">{t('dashboard.attendanceRate')}</span>
+              </div>
+            </div>
+            {/* Legenda: soni bilan, joy yetmasa keyingi qatorga tartibli o'raladi */}
+            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 mt-3">
+              {pieData.map((d, i) => (
+                <span key={i} className="inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                  {d.name}
+                  <span className="font-semibold text-gray-900 dark:text-white">{d.value}</span>
+                </span>
+              ))}
             </div>
           </>
         )}

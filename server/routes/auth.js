@@ -31,9 +31,11 @@ router.post('/login', async (req, res) => {
 
     const { rows } = await query(
       `SELECT u.*, b.name as branch_name, b.logo_url as branch_logo,
+              d.name as direction_name,
               st.logo_url as app_logo, st.app_name
        FROM users u
        LEFT JOIN branches b ON u.branch_id = b.id
+       LEFT JOIN directions d ON u.direction_id = d.id
        LEFT JOIN app_settings st ON st.id = 1
        WHERE u.username = $1`,
       [username.toLowerCase().trim()]
@@ -117,10 +119,12 @@ router.get('/me', verifyToken, async (req, res) => {
     const { rows } = await query(
       `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone,
               u.role, u.branch_id, u.avatar_url, u.is_active, u.last_login, u.created_at,
+              u.direction_id, d.name as direction_name,
               b.name as branch_name, b.logo_url as branch_logo,
               st.logo_url as app_logo, st.app_name
        FROM users u
        LEFT JOIN branches b ON u.branch_id = b.id
+       LEFT JOIN directions d ON u.direction_id = d.id
        LEFT JOIN app_settings st ON st.id = 1
        WHERE u.id = $1`,
       [req.user.id]
@@ -144,7 +148,12 @@ router.post('/change-password', verifyToken, async (req, res) => {
     if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
 
     const hash = await bcrypt.hash(newPassword, 12);
-    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+    // Students' clear-text copy (shown to admins) must follow the real password
+    if (req.user.role === 'student') {
+      await query('UPDATE users SET password_hash = $1, plain_password = $2 WHERE id = $3', [hash, newPassword, req.user.id]);
+    } else {
+      await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+    }
     await log(req.user.id, 'PASSWORD_CHANGED', 'user', req.user.id, null, req.ip);
     res.json({ success: true });
   } catch (err) {

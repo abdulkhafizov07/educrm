@@ -6,6 +6,7 @@ import { useI18n } from '@/contexts/I18nContext';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { Avatar } from '@/components/ui/Avatar';
 import { colorOf } from '@/lib/colors';
 import { cn, mediaUrl } from '@/lib/utils';
 import Link from 'next/link';
@@ -28,6 +29,28 @@ interface GroupLite {
   student_count: string;
 }
 
+interface TeacherLite {
+  id: string;
+  first_name: string;
+  last_name: string;
+  username: string;
+  avatar_url: string | null;
+  phone: string | null;
+  branch_name: string | null;
+  group_count: string;
+}
+
+interface StudentLite {
+  id: string;
+  first_name: string;
+  last_name: string;
+  username: string;
+  avatar_url: string | null;
+  phone: string | null;
+  branch_name: string | null;
+  group_names: string | null;
+}
+
 interface DirectionDetail {
   id: string;
   name: string;
@@ -40,7 +63,11 @@ interface DirectionDetail {
   student_count: string;
   group_count: string;
   groups: GroupLite[];
+  teachers: TeacherLite[];
+  students: StudentLite[];
 }
+
+type ListTab = 'groups' | 'teachers' | 'students';
 
 export default function DirectionDetailPage({
   params,
@@ -54,6 +81,8 @@ export default function DirectionDetailPage({
 
   const [dir, setDir] = useState<DirectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  // Which list is open below the stat cards (click a stat to switch)
+  const [tab, setTab] = useState<ListTab>('groups');
 
   useEffect(() => {
     api
@@ -77,21 +106,24 @@ export default function DirectionDetailPage({
 
   const c = colorOf(dir.color);
 
-  const stats = [
+  const stats: Array<{ v: string; l: string; icon: typeof Users; tab: ListTab }> = [
     {
       v: dir.group_count,
       l: t('branches.groups'),
       icon: FolderKanban,
+      tab: 'groups',
     },
     {
       v: dir.teacher_count,
       l: t('branches.teachers'),
       icon: GraduationCap,
+      tab: 'teachers',
     },
     {
       v: dir.student_count,
       l: t('branches.students'),
       icon: Users,
+      tab: 'students',
     },
   ];
 
@@ -167,11 +199,14 @@ export default function DirectionDetailPage({
             const Icon = s.icon;
 
             return (
-              <div
+              <button
                 key={i}
+                type="button"
+                onClick={() => setTab(s.tab)}
                 className={cn(
-                  'rounded-lg border p-4 bg-white dark:bg-gray-900 hover:shadow-md transition',
-                  c.border
+                  'rounded-lg border p-4 bg-white dark:bg-gray-900 hover:shadow-md transition text-left w-full cursor-pointer',
+                  c.border,
+                  tab === s.tab && 'ring-2 ring-offset-1 ring-blue-500 dark:ring-offset-gray-950'
                 )}
               >
 
@@ -210,7 +245,7 @@ export default function DirectionDetailPage({
 
                 </div>
 
-              </div>
+              </button>
             );
           })}
 
@@ -218,6 +253,7 @@ export default function DirectionDetailPage({
 
         {/* Groups */}
 
+        {tab === 'groups' && (
         <div>
 
           <h2 className="font-semibold text-lg mb-4 dark:text-white">
@@ -282,6 +318,86 @@ export default function DirectionDetailPage({
           )}
 
         </div>
+        )}
+
+        {/* Teachers in this direction */}
+
+        {tab === 'teachers' && (
+        <div>
+          <h2 className="font-semibold text-lg mb-4 dark:text-white">
+            {t('branches.teachers')} ({(dir.teachers || []).length})
+          </h2>
+          <div className={cn('rounded-lg border bg-white dark:bg-gray-900 overflow-hidden', c.border)}>
+            {(dir.teachers || []).length === 0 ? (
+              <div className="p-8 text-center text-sm text-gray-400">{t('common.noData')}</div>
+            ) : (
+              <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                {dir.teachers.map((tc) => (
+                  <Link
+                    key={tc.id}
+                    href={`/users/${tc.id}`}
+                    className="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                  >
+                    <Avatar firstName={tc.first_name} lastName={tc.last_name} avatarUrl={tc.avatar_url} size="sm" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                        {tc.first_name} {tc.last_name}
+                      </p>
+                      <p className="text-xs text-gray-400 truncate">
+                        @{tc.username}
+                        {tc.branch_name ? ` · ${tc.branch_name}` : ''} · {dir.name}
+                      </p>
+                    </div>
+                    <span className="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400">
+                      {tc.group_count} {t('branches.groups')}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        )}
+
+        {/* Students in this direction — rows show filial + guruh + yo'nalish */}
+
+        {tab === 'students' && (
+        <div>
+          <h2 className="font-semibold text-lg mb-4 dark:text-white">
+            {t('branches.students')} ({(dir.students || []).length})
+          </h2>
+          <div className={cn('rounded-lg border bg-white dark:bg-gray-900 overflow-hidden', c.border)}>
+            {(dir.students || []).length === 0 ? (
+              <div className="p-8 text-center text-sm text-gray-400">{t('common.noData')}</div>
+            ) : (
+              <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                {dir.students.map((s) => (
+                  <Link
+                    key={s.id}
+                    href={`/users/${s.id}`}
+                    className="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                  >
+                    <Avatar firstName={s.first_name} lastName={s.last_name} avatarUrl={s.avatar_url} size="sm" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                        {s.first_name} {s.last_name}
+                      </p>
+                      <p className="text-xs text-gray-400 truncate">
+                        @{s.username}
+                        {s.branch_name ? ` · ${s.branch_name}` : ''}
+                        {s.group_names ? ` · ${s.group_names}` : ''} · {dir.name}
+                      </p>
+                    </div>
+                    {s.phone && (
+                      <span className="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400">{s.phone}</span>
+                    )}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        )}
 
       </div>
     </DashboardLayout>
